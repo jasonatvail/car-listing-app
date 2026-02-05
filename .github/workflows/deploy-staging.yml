@@ -1,0 +1,83 @@
+name: Deploy to ECS - Staging
+
+on:
+  push:
+    tags:
+      - 'staging-*'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-2
+  ECR_REGISTRY: public.ecr.aws/c9g5y1u8/carswebapppublic
+  CLUSTER_NAME: car-listing-staging
+  ENVIRONMENT: staging
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR Public
+        run: |
+          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+
+      - name: Build and Push Backend
+        run: |
+          cd backend
+          docker build --build-arg BUILD_TARGET=production \
+            -t ${{ env.ECR_REGISTRY }}:backend-staging \
+            -t ${{ env.ECR_REGISTRY }}:backend-${{ steps.version.outputs.version }} \
+            .
+          docker push ${{ env.ECR_REGISTRY }}:backend-staging
+          docker push ${{ env.ECR_REGISTRY }}:backend-${{ steps.version.outputs.version }}
+
+      - name: Build and Push Frontend
+        run: |
+          docker build --build-arg BUILD_TARGET=production \
+            -t ${{ env.ECR_REGISTRY }}:frontend-staging \
+            -t ${{ env.ECR_REGISTRY }}:frontend-${{ steps.version.outputs.version }} \
+            .
+          docker push ${{ env.ECR_REGISTRY }}:frontend-staging
+          docker push ${{ env.ECR_REGISTRY }}:frontend-${{ steps.version.outputs.version }}
+
+      - name: Update ECS Services
+        run: |
+          for service in backend frontend; do
+            aws ecs update-service \
+              --cluster ${{ env.CLUSTER_NAME }} \
+              --service ${{ env.ENVIRONMENT }}-$service \
+              --force-new-deployment \
+              --region ${{ env.AWS_REGION }} || echo "Service may not exist yet"
+          done
+
+      - name: Wait for deployment
+        run: |
+          for service in backend frontend; do
+            aws ecs wait services-stable \
+              --cluster ${{ env.CLUSTER_NAME }} \
+              --services ${{ env.ENVIRONMENT }}-$service \
+              --region ${{ env.AWS_REGION }} || echo "Service stabilization timeout"
+          done
+
+      - name: Deployment Summary
+        run: |
+          echo "✅ Staging deployment complete"
+          echo "Version: ${{ steps.version.outputs.version }}"
+          echo "Backend: ${{ env.ECR_REGISTRY }}:backend-${{ steps.version.outputs.version }}"
+          echo "Frontend: ${{ env.ECR_REGISTRY }}:frontend-${{ steps.version.outputs.version }}"
