@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend-ecs:
+    platform: linux/amd64
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        BUILD_TARGET: production
+    image: public.ecr.aws/c9g5y1u8/carswebapppublic:backend-ecs
+    container_name: car-listing-backend-ecs
+
+  frontend-ecs:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_TARGET: production
+    image: public.ecr.aws/c9g5y1u8/carswebapppublic:frontend-ecs
+    container_name: car-listing-frontend-ecs
