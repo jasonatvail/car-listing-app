@@ -23,10 +23,13 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1  # Changed to us-east-1 for ECR Public
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR Public
         uses: aws-actions/amazon-ecr-login@v2
+        env:
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
         with:
           registry-type: public
 
