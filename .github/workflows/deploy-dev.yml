@@ -26,8 +26,17 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR Public
+        uses: docker/login-action@v3
+        with:
+          registry: public.ecr.aws
+          username: AWS
+          password: ${{ steps.ecr-login.outputs.password }}
+
+      - name: Get ECR login password
+        id: ecr-login
         run: |
-          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+          PASSWORD=$(aws ecr-public get-login-password --region us-east-1)
+          echo "password=$PASSWORD" >> $GITHUB_OUTPUT
 
       - name: Build and Push Backend
         run: |
@@ -50,13 +59,23 @@ jobs:
 
       - name: Update ECS Services
         run: |
-          for service in backend frontend; do
-            aws ecs update-service \
-              --cluster ${{ env.CLUSTER_NAME }} \
-              --service ${{ env.ENVIRONMENT }}-$service \
-              --force-new-deployment \
-              --region ${{ env.AWS_REGION }} || echo "Service may not exist yet"
-          done
+          # Check if cluster exists
+          if aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text | grep -q "ACTIVE"; then
+            echo "✅ Cluster ${{ env.CLUSTER_NAME }} found"
+            for service in backend frontend; do
+              aws ecs update-service \
+                --cluster ${{ env.CLUSTER_NAME }} \
+                --service ${{ env.ENVIRONMENT }}-$service \
+                --force-new-deployment \
+                --region ${{ env.AWS_REGION }} || echo "⚠️  Service $service may not exist yet"
+            done
+          else
+            echo "❌ ECS Cluster '${{ env.CLUSTER_NAME }}' not found!"
+            echo "📋 Deploy infrastructure first:"
+            echo "   cd car-listing-app"
+            echo "   ./deploy-ecs-dev.sh"
+            exit 1
+          fi
 
       - name: Deployment Summary
         run: |

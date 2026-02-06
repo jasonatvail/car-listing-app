@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Car Listing Application - ECS Fargate
+Description: Car Listing Application - ECS Fargate with Proper Networking
 
 Parameters:
   DBHostParameter:
@@ -22,15 +22,19 @@ Parameters:
     Description: PostgreSQL Database Password
     NoEcho: true
 
+  DBSecurityGroupId:
+    Type: String
+    Description: RDS Security Group ID (for proper ingress rules)
+
   BackendImageUri:
     Type: String
     Description: Backend Docker Image URI from ECR Public
-    Default: public.ecr.aws/c9g5y1u8/carswebapppublic:backend-ecs
+    Default: public.ecr.aws/c9g5y1u8/carswebapppublic:backend-dev
 
   FrontendImageUri:
     Type: String
     Description: Frontend Docker Image URI from ECR Public
-    Default: public.ecr.aws/c9g5y1u8/carswebapppublic:frontend-ecs
+    Default: public.ecr.aws/c9g5y1u8/carswebapppublic:frontend-dev
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -42,35 +46,29 @@ Parameters:
 
   TaskSubnets:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets for ECS tasks (public or private)
+    Description: Subnets for ECS tasks
 
-  AssignPublicIp:
+  AllowedClientIP:
     Type: String
-    Default: ENABLED
-    AllowedValues:
-      - ENABLED
-      - DISABLED
-    Description: Assign public IPs to tasks if using public subnets
+    Description: Your public IP address for ALB access (e.g., 172.99.221.5/32)
+    Default: 0.0.0.0/0
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}(/\d{1,2})?$'
 
   DesiredCount:
     Type: Number
     Default: 1
     MinValue: 1
 
-  BackendContainerPort:
-    Type: Number
-    Default: 5001
-
-  FrontendContainerPort:
-    Type: Number
-    Default: 80
-
 Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub 'car-listing-${AWS::StackName}'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
 
+  # IAM Roles
   TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -83,6 +81,16 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ECSTaskLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/*'
 
   TaskRole:
     Type: AWS::IAM::Role
@@ -95,43 +103,69 @@ Resources:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
 
+  # CloudWatch Logs
   BackendLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/ecs/${AWS::StackName}/backend'
-      RetentionInDays: 14
+      RetentionInDays: 7
 
   FrontendLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/ecs/${AWS::StackName}/frontend'
-      RetentionInDays: 14
+      RetentionInDays: 7
 
+  # Security Groups - PROPERLY SEPARATED
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow HTTP to ALB
+      GroupDescription: Security group for Application Load Balancer
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0
+          CidrIp: !Ref AllowedClientIP
+          Description: Allow HTTP from specified IP address
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-alb-sg'
 
-  ServiceSecurityGroup:
+  ECSTaskSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow ALB to ECS tasks
+      GroupDescription: Security group for ECS tasks
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: !Ref FrontendContainerPort
-          ToPort: !Ref FrontendContainerPort
+          FromPort: 5001
+          ToPort: 5001
           SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Backend from ALB
         - IpProtocol: tcp
-          FromPort: !Ref BackendContainerPort
-          ToPort: !Ref BackendContainerPort
+          FromPort: 80
+          ToPort: 80
           SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Frontend from ALB
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-ecs-sg'
+
+  # Allow RDS to receive traffic from ECS tasks
+  RDSIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DBSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref ECSTaskSecurityGroup
+      Description: PostgreSQL access from ECS tasks
 
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -156,9 +190,13 @@ Resources:
     Properties:
       VpcId: !Ref VpcId
       Protocol: HTTP
-      Port: !Ref BackendContainerPort
+      Port: 5001
       TargetType: ip
       HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
       Matcher:
         HttpCode: '200-399'
 
@@ -167,9 +205,13 @@ Resources:
     Properties:
       VpcId: !Ref VpcId
       Protocol: HTTP
-      Port: !Ref FrontendContainerPort
+      Port: 80
       TargetType: ip
       HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
       Matcher:
         HttpCode: '200-399'
 
@@ -201,22 +243,26 @@ Resources:
         - Name: backend
           Image: !Ref BackendImageUri
           PortMappings:
-            - ContainerPort: !Ref BackendContainerPort
+            - ContainerPort: 5001
           Environment:
             - Name: PGHOST
               Value: !Ref DBHostParameter
+            - Name: PGPORT
+              Value: '5432'
             - Name: PGDATABASE
               Value: !Ref DBNameParameter
             - Name: PGUSER
               Value: !Ref DBUserParameter
             - Name: PGPASSWORD
               Value: !Ref DBPasswordParameter
+            - Name: PORT
+              Value: '5001'
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref BackendLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: backend
 
   FrontendTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -233,13 +279,13 @@ Resources:
         - Name: frontend
           Image: !Ref FrontendImageUri
           PortMappings:
-            - ContainerPort: !Ref FrontendContainerPort
+            - ContainerPort: 80
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref FrontendLogGroup
               awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
+              awslogs-stream-prefix: frontend
 
   BackendService:
     Type: AWS::ECS::Service
@@ -252,13 +298,13 @@ Resources:
       TaskDefinition: !Ref BackendTaskDefinition
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: !Ref AssignPublicIp
+          AssignPublicIp: ENABLED
           SecurityGroups:
-            - !Ref ServiceSecurityGroup
+            - !Ref ECSTaskSecurityGroup
           Subnets: !Ref TaskSubnets
       LoadBalancers:
         - ContainerName: backend
-          ContainerPort: !Ref BackendContainerPort
+          ContainerPort: 5001
           TargetGroupArn: !Ref BackendTargetGroup
 
   FrontendService:
@@ -272,20 +318,44 @@ Resources:
       TaskDefinition: !Ref FrontendTaskDefinition
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: !Ref AssignPublicIp
+          AssignPublicIp: ENABLED
           SecurityGroups:
-            - !Ref ServiceSecurityGroup
+            - !Ref ECSTaskSecurityGroup
           Subnets: !Ref TaskSubnets
       LoadBalancers:
         - ContainerName: frontend
-          ContainerPort: !Ref FrontendContainerPort
+          ContainerPort: 80
           TargetGroupArn: !Ref FrontendTargetGroup
 
 Outputs:
-  LoadBalancerDNS:
-    Description: Public ALB DNS name
+  ClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+
+  ALBDNSName:
+    Description: Application Load Balancer DNS
     Value: !GetAtt ApplicationLoadBalancer.DNSName
 
   ApplicationURL:
     Description: Application URL
     Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}'
+
+  ECSSecurityGroupId:
+    Description: ECS Task Security Group ID
+    Value: !Ref ECSTaskSecurityGroup
+
+  BackendServiceName:
+    Description: Backend ECS Service Name
+    Value: !GetAtt BackendService.Name
+
+  FrontendServiceName:
+    Description: Frontend ECS Service Name
+    Value: !GetAtt FrontendService.Name
+
+  BackendLogGroup:
+    Description: Backend CloudWatch Log Group
+    Value: !Ref BackendLogGroup
+
+  FrontendLogGroup:
+    Description: Frontend CloudWatch Log Group
+    Value: !Ref FrontendLogGroup
