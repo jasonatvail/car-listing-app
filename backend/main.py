@@ -194,10 +194,10 @@ def get_listings(
                 l.listing_id, 
                 l.listing_price, 
                 l.listing_odometer, 
-                l.listing_description, 
+                d.description_text AS listing_description, 
                 l.listing_vin_id,
-                l.lat AS listing_lat,
-                l.lon AS listing_lon,
+                l.listing_latitude AS listing_lat,
+                l.listing_longitude AS listing_lon,
                 r.region_name AS listing_region, 
                 c.year AS listing_year,
                 mk.make_name || ' ' || md.model_name AS listing_make_model,
@@ -210,6 +210,7 @@ def get_listings(
             LEFT JOIN drives dr ON c.drives_id = dr.drives_id
             LEFT JOIN transmissions tr ON c.transmission_id = tr.transmission_id
             LEFT JOIN regions r ON l.listing_region_id = r.region_id
+            LEFT JOIN descriptions d ON l.listing_description_id = d.description_id
         """
         
         if filters:
