@@ -74,7 +74,7 @@ jobs:
             echo "❌ ECS Cluster '${{ env.CLUSTER_NAME }}' not found!"
             echo "📋 Deploy infrastructure first:"
             echo "   cd car-listing-app"
-            echo "   ./deploy-ecs-dev.sh"
+            echo "   ./deployment/deploy-ecs-dev.sh"
             exit 1
           fi
       - name: Deployment Summary

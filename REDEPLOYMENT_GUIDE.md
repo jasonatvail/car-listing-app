@@ -46,7 +46,7 @@ aws cloudformation describe-stacks \
 ### 2. Deploy New Stack
 ```bash
 cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
-./deploy-ecs-dev.sh
+./deployment/deploy-ecs-dev.sh
 ```
 
 The script now automatically:

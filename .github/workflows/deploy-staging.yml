@@ -9,7 +9,7 @@ on:
 env:
   AWS_REGION: us-east-2
   ECR_REGISTRY: public.ecr.aws/c9g5y1u8/carswebapppublic
-  CLUSTER_NAME: car-listing-staging
+  CLUSTER_NAME: car-listing-car-listing-staging
   ENVIRONMENT: staging
 
 jobs:
@@ -33,18 +33,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get ECR login password
-        id: ecr-login
-        run: |
-          PASSWORD=$(aws ecr-public get-login-password --region us-east-2)
-          echo "password=$PASSWORD" >> $GITHUB_OUTPUT
-
       - name: Login to Amazon ECR Public
-        uses: docker/login-action@v3
+        uses: aws-actions/amazon-ecr-login@v2
+        env:
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
         with:
-          registry: public.ecr.aws
-          username: AWS
-          password: ${{ steps.ecr-login.outputs.password }}
+          registry-type: public
 
       - name: Build and Push Backend
         run: |
@@ -64,6 +59,12 @@ jobs:
             .
           docker push ${{ env.ECR_REGISTRY }}:frontend-staging
           docker push ${{ env.ECR_REGISTRY }}:frontend-${{ steps.version.outputs.version }}
+
+      - name: Debug AWS identity and clusters
+        run: |
+          aws sts get-caller-identity
+          aws ecs list-clusters --region ${{ env.AWS_REGION }}
+          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
 
       - name: Update ECS Services
         run: |
