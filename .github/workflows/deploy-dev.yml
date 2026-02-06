@@ -49,6 +49,12 @@ jobs:
           docker push ${{ env.ECR_REGISTRY }}:frontend-dev
           docker push ${{ env.ECR_REGISTRY }}:frontend-dev-${{ github.sha }}
 
+      - name: Debug AWS identity and clusters
+        run: |
+          aws sts get-caller-identity
+          aws ecs list-clusters --region ${{ env.AWS_REGION }}
+          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
+
       - name: Update ECS Services
         run: |
           # Check if cluster exists
@@ -68,10 +74,6 @@ jobs:
             echo "   ./deploy-ecs-dev.sh"
             exit 1
           fi
-      - name: Debug AWS identity and clusters
-        run: |
-          aws sts get-caller-identity
-          aws ecs list-clusters --region ${{ env.AWS_REGION }}
       - name: Deployment Summary
         run: |
           echo "✅ Dev deployment initiated"
