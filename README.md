@@ -43,7 +43,7 @@ A modern car listing platform with React frontend, FastAPI backend, and PostgreS
 
 1. **Clone the repository:**
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/jasonatvail/car-listing-app.git
    cd CarListingVisualization
    ```
 
