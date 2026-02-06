@@ -23,10 +23,13 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1  # Changed to us-east-1 for ECR Public
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR Public
         uses: aws-actions/amazon-ecr-login@v2
+        env:
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
         with:
           registry-type: public
 
@@ -49,6 +52,12 @@ jobs:
           docker push ${{ env.ECR_REGISTRY }}:frontend-dev
           docker push ${{ env.ECR_REGISTRY }}:frontend-dev-${{ github.sha }}
 
+      - name: Debug AWS identity and clusters
+        run: |
+          aws sts get-caller-identity
+          aws ecs list-clusters --region ${{ env.AWS_REGION }}
+          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
+
       - name: Update ECS Services
         run: |
           # Check if cluster exists
@@ -65,13 +74,9 @@ jobs:
             echo "❌ ECS Cluster '${{ env.CLUSTER_NAME }}' not found!"
             echo "📋 Deploy infrastructure first:"
             echo "   cd car-listing-app"
-            echo "   ./deploy-ecs-dev.sh"
+            echo "   ./deployment/deploy-ecs-dev.sh"
             exit 1
           fi
-      - name: Debug AWS identity and clusters
-        run: |
-          aws sts get-caller-identity
-          aws ecs list-clusters --region ${{ env.AWS_REGION }}
       - name: Deployment Summary
         run: |
           echo "✅ Dev deployment initiated"

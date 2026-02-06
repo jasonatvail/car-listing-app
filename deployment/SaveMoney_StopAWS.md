@@ -4,13 +4,13 @@
 
 ```bash
 # Stop services when not using (saves ~$0.03-0.05/hour)
-./stop-ecs-services.sh
+./deployment/stop-ecs-services.sh
 
 # Start services when ready to develop
-./start-ecs-services.sh
+./deployment/start-ecs-services.sh
 
 # Start with multiple tasks
-./start-ecs-services.sh 2
+./deployment/start-ecs-services.sh 2
 ```
 
 ## Cost Management Scripts
@@ -28,7 +28,7 @@
 **Usage:**
 ```bash
 cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
-./stop-ecs-services.sh
+./deployment/stop-ecs-services.sh
 ```
 
 **Output Example:**
@@ -73,13 +73,13 @@ Found services:
 **Usage:**
 ```bash
 # Start with 1 task per service (default)
-./start-ecs-services.sh
+./deployment/start-ecs-services.sh
 
 # Start with 2 tasks per service
-./start-ecs-services.sh 2
+./deployment/start-ecs-services.sh 2
 
 # Start with 5 tasks per service
-./start-ecs-services.sh 5
+./deployment/start-ecs-services.sh 5
 ```
 
 **Output Example:**
@@ -132,10 +132,10 @@ Desired Count: 1
 #### Strategy 1: Stop Services When Not Using (Recommended)
 ```bash
 # Stop when you're done working
-./stop-ecs-services.sh
+./deployment/stop-ecs-services.sh
 
 # Start when you need it
-./start-ecs-services.sh
+./deployment/start-ecs-services.sh
 ```
 
 **Savings:** ~$0.03-0.05/hour (~$22-36/month if you use it 8 hours/day)
@@ -172,7 +172,7 @@ aws cloudformation wait stack-delete-complete \
 
 **Savings:** ~$0.06/hour (~$45/month)
 **Keeps:** ECR images, RDS database (separate)
-**Time to Redeploy:** ~10 minutes with `./deploy-ecs-dev.sh`
+**Time to Redeploy:** ~10 minutes with `./deployment/deploy-ecs-dev.sh`
 
 #### Strategy 4: Complete Teardown (Zero Cost)
 ```bash
@@ -210,7 +210,7 @@ aws ecs describe-services \
   --query 'services[0].desiredCount'
 
 # Start if needed
-./start-ecs-services.sh
+./deployment/start-ecs-services.sh
 
 # Wait 2-3 minutes for health checks
 # Open app: http://car-li-Appli-N93AGTD2xoPE-5427597.us-east-2.elb.amazonaws.com
@@ -219,7 +219,7 @@ aws ecs describe-services \
 ### Evening - Stop to Save Money
 ```bash
 # Stop services
-./stop-ecs-services.sh
+./deployment/stop-ecs-services.sh
 
 # Optionally stop RDS too
 aws rds stop-db-instance \
@@ -379,7 +379,7 @@ docker-compose up
 ## Summary
 
 **Best Practices:**
-1. ✅ Run `./stop-ecs-services.sh` when not actively using
+1. ✅ Run `./deployment/stop-ecs-services.sh` when not actively using
 2. ✅ Use local Docker Compose for daily development
 3. ✅ Only run ECS when testing cloud features
 4. ✅ Set up billing alerts at $10 and $25 thresholds

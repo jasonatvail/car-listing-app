@@ -10,7 +10,7 @@
 
 ```bash
 cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
-./deploy-ecs-dev.sh
+./deployment/deploy-ecs-dev.sh
 ```
 
 This will:
@@ -146,7 +146,7 @@ To update infrastructure:
 
 ```bash
 # Edit template.yaml, then:
-./deploy-ecs-dev.sh
+./deployment/deploy-ecs-dev.sh
 ```
 
 To update application code only:
