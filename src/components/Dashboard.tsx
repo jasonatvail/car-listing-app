@@ -27,6 +27,7 @@ export default function Dashboard(){
   const [removingDuplicates, setRemovingDuplicates] = useState(false)
   const [interactiveMode, setInteractiveMode] = useState(false)
   const [duplicateStatus, setDuplicateStatus] = useState<string>('')
+  const [stats, setStats] = useState<{ total_listings: number; total_cars: number } | null>(null)
   const statusRef = useRef<HTMLPreElement>(null)
 
   async function fetchListings(filters?: { q?: string; make_id?: number | null; model_id?: number; minPrice?: number | null; maxPrice?: number | null; minYear?: number | null; maxYear?: number | null; minOdometer?: number | null; maxOdometer?: number | null; drive?: number | null; transmission?: number | null; searchVin?: string; searchListingId?: string }){
@@ -65,7 +66,19 @@ export default function Dashboard(){
     }
   }
 
-  useEffect(()=>{ fetchListings() }, [])
+  async function fetchStats() {
+    try {
+      const response = await axios.get('/api/stats')
+      setStats(response.data)
+    } catch (error) {
+      console.error('Failed to fetch stats:', error)
+    }
+  }
+
+  useEffect(()=>{ 
+    fetchListings()
+    fetchStats()
+  }, [])
 
   // Auto-scroll status output to bottom
   useEffect(() => {
@@ -214,6 +227,28 @@ export default function Dashboard(){
         <Filters onApply={(f: any)=> fetchListings(f)} priceRange={priceRange} />
       </aside>
       <main className="col-span-3">
+        {/* Database Statistics */}
+        {stats && (
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <Card>
+              <CardHeader>
+                <div className="text-sm font-medium text-slate-600">Total Listings</div>
+              </CardHeader>
+              <div className="px-6 pb-6">
+                <div className="text-3xl font-bold text-blue-600">{stats.total_listings.toLocaleString()}</div>
+              </div>
+            </Card>
+            <Card>
+              <CardHeader>
+                <div className="text-sm font-medium text-slate-600">Total Cars</div>
+              </CardHeader>
+              <div className="px-6 pb-6">
+                <div className="text-3xl font-bold text-green-600">{stats.total_cars.toLocaleString()}</div>
+              </div>
+            </Card>
+          </div>
+        )}
+        
         <ListingMap listings={listings} selectedRegion={selectedRegion} onSelectRegion={setSelectedRegion} />
         <Card className="mb-6">
           <CardHeader>

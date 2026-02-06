@@ -77,6 +77,32 @@ def root():
     return {"message": "CarListingVisualization backend"}
 
 
+@app.get("/api/stats")
+def get_stats():
+    """Get database statistics: total listings and total cars."""
+    conn = pool.getconn()
+    try:
+        cursor = conn.cursor()
+        
+        # Get total listings count
+        cursor.execute("SELECT COUNT(*) FROM listings")
+        total_listings = cursor.fetchone()[0]
+        
+        # Get total cars count
+        cursor.execute("SELECT COUNT(*) FROM cars")
+        total_cars = cursor.fetchone()[0]
+        
+        cursor.close()
+        return {
+            "total_listings": total_listings,
+            "total_cars": total_cars
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        pool.putconn(conn)
+
+
 @app.get("/api/listings")
 def get_listings(
     limit: int = Query(50, ge=1, le=1000),
