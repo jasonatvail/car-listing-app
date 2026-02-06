@@ -35,7 +35,7 @@ jobs:
       - name: Get ECR login password
         id: ecr-login
         run: |
-          PASSWORD=$(aws ecr-public get-login-password --region us-east-1)
+          PASSWORD=$(aws ecr-public get-login-password --region us-east-2)
           echo "password=$PASSWORD" >> $GITHUB_OUTPUT
 
       - name: Build and Push Backend
