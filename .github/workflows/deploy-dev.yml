@@ -52,11 +52,54 @@ jobs:
           docker push ${{ env.ECR_REGISTRY }}:frontend-dev
           docker push ${{ env.ECR_REGISTRY }}:frontend-dev-${{ github.sha }}
 
+      - name: Resolve pushed image digests (pin images)
+        shell: bash
+        env:
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          REPO=$(echo "$ECR_REGISTRY" | awk -F/ '{print $NF}')
+
+          echo "Resolving backend image digest for tag: backend-dev-${{ github.sha }}"
+          BACKEND_DIGEST=$(aws ecr-public describe-images --repository-name "$REPO" --image-ids imageTag=backend-dev-${{ github.sha }} --region us-east-1 --query 'imageDetails[0].imageDigest' --output text)
+          if [ -z "$BACKEND_DIGEST" ] || [ "$BACKEND_DIGEST" = "None" ]; then
+            echo "Failed to resolve backend digest; falling back to tag (warning: not pinned)"
+            echo "BACKEND_IMAGE=${ECR_REGISTRY}:backend-dev-${{ github.sha }}" >> $GITHUB_ENV
+          else
+            echo "BACKEND_IMAGE=${ECR_REGISTRY}@${BACKEND_DIGEST}" >> $GITHUB_ENV
+            echo "Resolved backend image: ${ECR_REGISTRY}@${BACKEND_DIGEST}"
+          fi
+
+          echo "Resolving frontend image digest for tag: frontend-dev-${{ github.sha }}"
+          FRONTEND_DIGEST=$(aws ecr-public describe-images --repository-name "$REPO" --image-ids imageTag=frontend-dev-${{ github.sha }} --region us-east-1 --query 'imageDetails[0].imageDigest' --output text)
+          if [ -z "$FRONTEND_DIGEST" ] || [ "$FRONTEND_DIGEST" = "None" ]; then
+            echo "Failed to resolve frontend digest; falling back to tag (warning: not pinned)"
+            echo "FRONTEND_IMAGE=${ECR_REGISTRY}:frontend-dev-${{ github.sha }}" >> $GITHUB_ENV
+          else
+            echo "FRONTEND_IMAGE=${ECR_REGISTRY}@${FRONTEND_DIGEST}" >> $GITHUB_ENV
+            echo "Resolved frontend image: ${ECR_REGISTRY}@${FRONTEND_DIGEST}"
+          fi
+
+      - name: Deploy CloudFormation with pinned images
+        env:
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+        run: |
+          set -euo pipefail
+          echo "Deploying CloudFormation stack '${{ env.CLUSTER_NAME }}' with pinned images"
+          aws cloudformation deploy \
+            --stack-name ${{ env.CLUSTER_NAME }} \
+            --template-file template.yaml \
+            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
+
       - name: Debug AWS identity and clusters
         run: |
           aws sts get-caller-identity
           aws ecs list-clusters --region ${{ env.AWS_REGION }}
-          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
+          aws ecs.describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
 
       - name: Update ECS Services
         run: |
