@@ -2,8 +2,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import psycopg2
-from psycopg2.pool import SimpleConnectionPool
+import asyncpg
 import os
 import zlib
 import base64
@@ -44,12 +43,91 @@ missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars:
     raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
-# Enable SSL for remote connections
-if pg_config['host'] not in ['localhost', '127.0.0.1']:
-    pg_config['sslmode'] = 'require'
+import ssl
 
-# Create connection pool
-pool = SimpleConnectionPool(1, 20, **pg_config)
+# Enable SSL for remote connections and create SSL context
+PG_SSL_VERIFY = os.getenv('PGSSLVERIFY', 'true').lower() not in ('0', 'false', 'no')
+if pg_config['host'] not in ['localhost', '127.0.0.1']:
+    if PG_SSL_VERIFY:
+        # If user provided a root CA file (PGSSLROOTCERT), use it
+        ssl_cafile = os.getenv('PGSSLROOTCERT')
+        if ssl_cafile:
+            SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
+        else:
+            # Prefer certifi bundle if available, fall back to system default
+            try:
+                import certifi
+                SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+            except Exception:
+                SSL_CONTEXT = ssl.create_default_context()
+    else:
+        # Insecure: do not verify certificate (for testing environments with self-signed certs)
+        SSL_CONTEXT = ssl.SSLContext()
+        SSL_CONTEXT.check_hostname = False
+        SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+else:
+    SSL_CONTEXT = None
+
+# Async connection pool (initialized on startup)
+pool: Optional[asyncpg.pool.Pool] = None
+
+@app.on_event("startup")
+async def startup():
+    global pool
+    pool = await asyncpg.create_pool(
+        host=pg_config['host'],
+        port=pg_config['port'],
+        user=pg_config['user'],
+        password=pg_config['password'],
+        database=pg_config['database'],
+        min_size=1,
+        max_size=20,
+        ssl=SSL_CONTEXT
+    )
+
+    # Log SSL verification status at startup
+    try:
+        if SSL_CONTEXT is None:
+            print("🔒 DB SSL: not used (local host)", flush=True)
+        elif PG_SSL_VERIFY:
+            print("🔒 DB SSL verification: ENABLED (using certifi/system CA)", flush=True)
+        else:
+            print("⚠️  DB SSL verification: DISABLED (INSECURE - certificates not verified)", flush=True)
+    except Exception:
+        print("⚠️  DB SSL verification: status unknown")
+
+    # Verify server-side SSL usage for the new connection (if possible)
+    try:
+        async with pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
+                ssl_used = None
+                if row is not None:
+                    # row can be a Record or mapping
+                    ssl_used = row.get('ssl') if hasattr(row, 'get') else (row[0] if len(row) > 0 else None)
+
+                if ssl_used is True:
+                    if os.getenv('PGSSLROOTCERT'):
+                        print("🔒 DB SSL: connection established and verified using pinned CA", flush=True)
+                    elif PG_SSL_VERIFY:
+                        print("🔒 DB SSL: connection established and SSL verification enabled (using certifi/system CA)", flush=True)
+                    else:
+                        print("🔒 DB SSL: connection established with SSL but verification disabled (insecure)", flush=True)
+                elif ssl_used is False:
+                    print("⚠️  DB SSL: connection established but not using SSL", flush=True)
+                else:
+                    print("⚠️  DB SSL: unable to determine server SSL usage (pg_stat_ssl may be unavailable)", flush=True)
+            except Exception as e:
+                print(f"⚠️  DB SSL verification check failed: {e}", flush=True)
+    except Exception as e:
+        print(f"⚠️  Could not acquire DB connection to verify SSL: {e}")
+
+@app.on_event("shutdown")
+async def shutdown():
+    global pool
+    if pool:
+        await pool.close()
+        pool = None
 
 
 def decompress_description(b64: str) -> Optional[str]:
@@ -78,33 +156,35 @@ def root():
 
 
 @app.get("/api/stats")
-def get_stats():
-    """Get database statistics: total listings and total cars."""
-    conn = pool.getconn()
-    try:
-        cursor = conn.cursor()
-        
-        # Get total listings count
-        cursor.execute("SELECT COUNT(*) FROM listings")
-        total_listings = cursor.fetchone()[0]
-        
-        # Get total cars count
-        cursor.execute("SELECT COUNT(*) FROM cars")
-        total_cars = cursor.fetchone()[0]
-        
-        cursor.close()
-        return {
-            "total_listings": total_listings,
-            "total_cars": total_cars
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    finally:
-        pool.putconn(conn)
+async def get_stats():
+    """Get database statistics: total listings and total cars.
+    Uses a short statement_timeout and falls back to estimated counts if needed."""
+    if pool is None:
+        raise HTTPException(status_code=500, detail="Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        try:
+            # Fail fast if COUNT(*) would take too long (5s)
+            await conn.execute("SET LOCAL statement_timeout = 5000")
+            total_listings = await conn.fetchval("SELECT COUNT(*) FROM listings")
+            total_cars = await conn.fetchval("SELECT COUNT(*) FROM cars")
+            return {"total_listings": total_listings, "total_cars": total_cars}
+        except Exception as e:
+            # Fallback to estimated counts
+            try:
+                est_listings = await conn.fetchval("SELECT COALESCE(reltuples::bigint,0) FROM pg_class WHERE relname = 'listings'")
+                est_cars = await conn.fetchval("SELECT COALESCE(reltuples::bigint,0) FROM pg_class WHERE relname = 'cars'")
+                return {
+                    "total_listings": int(est_listings or 0),
+                    "total_cars": int(est_cars or 0),
+                    "note": "estimated counts due to DB timeout/error"
+                }
+            except Exception:
+                raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 @app.get("/api/listings")
-def get_listings(
+async def get_listings(
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     q: Optional[str] = None,
@@ -120,230 +200,239 @@ def get_listings(
     max_odometer: Optional[int] = None,
     drive: Optional[int] = None,
     transmission: Optional[int] = None,
-    with_coords: bool = False
+    with_coords: bool = False,
+    user_lat: Optional[float] = None,
+    user_lon: Optional[float] = None,
+    radius: Optional[float] = None,
+    radius_unit: Optional[str] = 'mi'
 ):
     """Get listings with optional filtering."""
-    conn = pool.getconn()
+    if pool is None:
+        return []
+
+    # Build filters using $n placeholders for asyncpg
+    filters = []
+    params: List = []
+
+    if listing_id:
+        filters.append(f"l.listing_id = ${len(params) + 1}")
+        params.append(listing_id)
+
+    if vin:
+        filters.append(f"c.vin_id ILIKE ${len(params) + 1}")
+        params.append(f"%{vin}%")
+
+    if with_coords:
+        filters.append("l.listing_latitude IS NOT NULL AND l.listing_longitude IS NOT NULL")
+
+    if min_price is not None:
+        filters.append(f"listing_price >= ${len(params) + 1}")
+        params.append(min_price)
+
+    if max_price is not None:
+        filters.append(f"listing_price <= ${len(params) + 1}")
+        params.append(max_price)
+
+    if make_id is not None:
+        filters.append(f"mk.make_id = ${len(params) + 1}")
+        params.append(make_id)
+
+    if model_id is not None:
+        filters.append(f"c.model_id = ${len(params) + 1}")
+        params.append(model_id)
+
+    if min_year is not None:
+        filters.append(f"c.year >= ${len(params) + 1}")
+        params.append(min_year)
+
+    if max_year is not None:
+        filters.append(f"c.year <= ${len(params) + 1}")
+        params.append(max_year)
+
+    if min_odometer is not None:
+        filters.append(f"l.listing_odometer >= ${len(params) + 1}")
+        params.append(min_odometer)
+
+    if max_odometer is not None:
+        filters.append(f"l.listing_odometer <= ${len(params) + 1}")
+        params.append(max_odometer)
+
+    if drive is not None:
+        filters.append(f"c.drives_id = ${len(params) + 1}")
+        params.append(drive)
+
+    if transmission is not None:
+        filters.append(f"c.transmission_id = ${len(params) + 1}")
+        params.append(transmission)
+
+    # Handle geo-distance filter (haversine/acos formula). If user provides lat/lon and a radius, apply filter.
+    geo_distance_expr = None
+    geo_used = False
+    if user_lat is not None and user_lon is not None and radius is not None:
+        # Ensure listings have coords
+        if not with_coords:
+            filters.append("l.listing_latitude IS NOT NULL AND l.listing_longitude IS NOT NULL")
+        # Choose Earth radius in requested units
+        earth_radius = 3958.7613 if (radius_unit or 'mi') == 'mi' else 6371.0088
+        # Parameter indices for user lat, lon, and radius
+        lat_idx = len(params) + 1
+        lon_idx = len(params) + 2
+        radius_idx = len(params) + 3
+        geo_distance_expr = (
+            f"({earth_radius} * acos(cos(radians(${lat_idx})) * cos(radians(l.listing_latitude)) * "
+            f"cos(radians(l.listing_longitude) - radians(${lon_idx})) + sin(radians(${lat_idx})) * sin(radians(l.listing_latitude))))"
+        )
+        # Filter by distance
+        filters.append(f"{geo_distance_expr} <= ${radius_idx}")
+        # Append user params in the same order
+        params.extend([user_lat, user_lon, radius])
+        geo_used = True
+        print(f"Applying geo filter: lat={user_lat} lon={user_lon} radius={radius} unit={radius_unit}")
+
+    sql_limit = min(max(limit * 10, 100), 1000) if (q or vin or listing_id) else limit
+
+    # Build SELECT and include a distance column when geo is used for ordering
+    select_extra = f", {geo_distance_expr} AS distance" if geo_used else ""
+
+    query = f"""
+        SELECT 
+            l.listing_id, 
+            l.listing_price, 
+            l.listing_odometer, 
+            d.description_text AS listing_description, 
+            l.listing_vin_id,
+            l.listing_latitude AS listing_lat,
+            l.listing_longitude AS listing_lon,
+            r.region_name AS listing_region, 
+            c.year AS listing_year,
+            mk.make_name || ' ' || md.model_name AS listing_make_model,
+            tr.transmission_type AS listing_transmission_type,
+            dr.drives_type AS listing_drive_type{select_extra}
+        FROM listings l
+        LEFT JOIN cars c ON l.listing_vin_id = c.vin_id
+        LEFT JOIN models md ON c.model_id = md.model_id
+        LEFT JOIN makes mk ON md.make_id = mk.make_id
+        LEFT JOIN drives dr ON c.drives_id = dr.drives_id
+        LEFT JOIN transmissions tr ON c.transmission_id = tr.transmission_id
+        LEFT JOIN regions r ON l.listing_region_id = r.region_id
+        LEFT JOIN descriptions d ON l.listing_description_id = d.description_id
+    """
+
+    if filters:
+        query += " WHERE " + " AND ".join(filters)
+
+    params.extend([sql_limit, 0])
+    if geo_used:
+        query += f" ORDER BY distance ASC, l.listing_id DESC LIMIT ${len(params)-1} OFFSET ${len(params)}"
+    else:
+        query += f" ORDER BY l.listing_id DESC LIMIT ${len(params)-1} OFFSET ${len(params)}"
+
     try:
-        cursor = conn.cursor()
-        
-        # Build filters
-        filters = []
-        params = []
-        idx = 1
-        
-        # Handle listing ID search - exact match
-        if listing_id:
-            filters.append(f"l.listing_id = %s")
-            params.append(listing_id)
-        
-        # Handle VIN search - partial match
-        if vin:
-            filters.append(f"c.vin_id ILIKE %s")
-            params.append(f"%{vin}%")
-        
-        if with_coords:
-            filters.append("l.lat IS NOT NULL AND l.lon IS NOT NULL")
-        
-        if min_price is not None:
-            filters.append("listing_price >= %s")
-            params.append(min_price)
-        
-        if max_price is not None:
-            filters.append("listing_price <= %s")
-            params.append(max_price)
-        
-        if make_id is not None:
-            filters.append("mk.make_id = %s")
-            params.append(make_id)
-        
-        if model_id is not None:
-            filters.append("c.model_id = %s")
-            params.append(model_id)
-        
-        if min_year is not None:
-            filters.append("c.year >= %s")
-            params.append(min_year)
-        
-        if max_year is not None:
-            filters.append("c.year <= %s")
-            params.append(max_year)
-        
-        if min_odometer is not None:
-            filters.append("l.listing_odometer >= %s")
-            params.append(min_odometer)
-        
-        if max_odometer is not None:
-            filters.append("l.listing_odometer <= %s")
-            params.append(max_odometer)
-        
-        if drive is not None:
-            filters.append("c.drives_id = %s")
-            params.append(drive)
-        
-        if transmission is not None:
-            filters.append("c.transmission_id = %s")
-            params.append(transmission)
-        
-        # Fetch larger batch if text search is needed
-        sql_limit = min(max(limit * 10, 100), 1000) if (q or vin or listing_id) else limit
-        
-        # Build query
-        query = """
-            SELECT 
-                l.listing_id, 
-                l.listing_price, 
-                l.listing_odometer, 
-                d.description_text AS listing_description, 
-                l.listing_vin_id,
-                l.listing_latitude AS listing_lat,
-                l.listing_longitude AS listing_lon,
-                r.region_name AS listing_region, 
-                c.year AS listing_year,
-                mk.make_name || ' ' || md.model_name AS listing_make_model,
-                tr.transmission_type AS listing_transmission_type,
-                dr.drives_type AS listing_drive_type
-            FROM listings l
-            LEFT JOIN cars c ON l.listing_vin_id = c.vin_id
-            LEFT JOIN models md ON c.model_id = md.model_id
-            LEFT JOIN makes mk ON md.make_id = mk.make_id
-            LEFT JOIN drives dr ON c.drives_id = dr.drives_id
-            LEFT JOIN transmissions tr ON c.transmission_id = tr.transmission_id
-            LEFT JOIN regions r ON l.listing_region_id = r.region_id
-            LEFT JOIN descriptions d ON l.listing_description_id = d.description_id
-        """
-        
-        if filters:
-            query += " WHERE " + " AND ".join(filters)
-        
-        query += f" ORDER BY l.listing_id DESC LIMIT %s OFFSET %s"
-        params.extend([sql_limit, 0])
-        
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-        
-        # Process results
-        skipped_vin_count = 0
-        results = []
-        
-        for row in rows:
-            # Skip VINs longer than 17 characters
-            if row[4] and len(row[4]) > 17:
-                skipped_vin_count += 1
-                continue
-            
-            results.append({
-                'listing_id': row[0],
-                'listing_price': row[1],
-                'listing_odometer': row[2],
-                'listing_description': decompress_description(row[3]),
-                'listing_vin_id': row[4],
-                'listing_lat': str(row[5]) if row[5] is not None else None,
-                'listing_lon': str(row[6]) if row[6] is not None else None,
-                'listing_region': row[7],
-                'listing_year': row[8],
-                'listing_make_model': row[9],
-                'listing_transmission_type': row[10],
-                'listing_drive_type': row[11]
-            })
-        
-        if skipped_vin_count > 0:
-            print(f"Skipped {skipped_vin_count} listings due to long VIN (>17 chars)")
-        
-        # Apply text search filter if provided
-        if q:
-            lower_q = q.lower()
-            results = [
-                r for r in results
-                if (lower_q in (r['listing_description'] or '').lower() or
-                    lower_q in (r['listing_vin_id'] or '').lower())
-            ]
-            # Apply offset/limit after filtering
-            results = results[offset:offset + limit]
-        else:
-            # Apply offset if no post-filtering
-            if offset > 0:
-                results = results[offset:offset + limit]
-        
-        cursor.close()
-        return results
-        
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
     except Exception as e:
         print(f"DB error: {e}")
         return []
-    finally:
-        pool.putconn(conn)
+
+    skipped_vin_count = 0
+    results = []
+    for row in rows:
+        vin = row['listing_vin_id']
+        if vin and len(vin) > 17:
+            skipped_vin_count += 1
+            continue
+        results.append({
+            'listing_id': row['listing_id'],
+            'listing_price': row['listing_price'],
+            'listing_odometer': row['listing_odometer'],
+            'listing_description': decompress_description(row['listing_description']),
+            'listing_vin_id': vin,
+            'listing_lat': str(row['listing_lat']) if row['listing_lat'] is not None else None,
+            'listing_lon': str(row['listing_lon']) if row['listing_lon'] is not None else None,
+            'listing_region': row['listing_region'],
+            'listing_year': row['listing_year'],
+            'listing_make_model': row['listing_make_model'],
+            'listing_transmission_type': row['listing_transmission_type'],
+            'listing_drive_type': row['listing_drive_type'],
+            'distance': float(row['distance']) if 'distance' in row and row['distance'] is not None else None,
+            'distance_unit': 'mi' if geo_used and (radius_unit or 'mi') == 'mi' else ('km' if geo_used else None)
+        })
+
+    if skipped_vin_count > 0:
+        print(f"Skipped {skipped_vin_count} listings due to long VIN (>17 chars)")
+
+    if q:
+        lower_q = q.lower()
+        results = [
+            r for r in results
+            if (lower_q in (r['listing_description'] or '').lower() or
+                lower_q in (r['listing_vin_id'] or '').lower())
+        ]
+        results = results[offset:offset + limit]
+    else:
+        if offset > 0:
+            results = results[offset:offset + limit]
+
+    return results
 
 
 @app.get("/api/makes")
-def get_makes():
+async def get_makes():
     """Get list of makes."""
-    conn = pool.getconn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT make_id, make_name FROM makes ORDER BY make_name")
-        rows = cursor.fetchall()
-        cursor.close()
-        return [{"make_id": row[0], "make_name": row[1]} for row in rows]
-    except Exception as e:
-        print(f"DB error: {e}")
+    if pool is None:
         return []
-    finally:
-        pool.putconn(conn)
+    async with pool.acquire() as conn:
+        try:
+            rows = await conn.fetch("SELECT make_id, make_name FROM makes ORDER BY make_name")
+            return [{"make_id": r['make_id'], "make_name": r['make_name']} for r in rows]
+        except Exception as e:
+            print(f"DB error: {e}")
+            return []
 
 
 @app.get("/api/models")
-def get_models(make_id: Optional[int] = None):
+async def get_models(make_id: Optional[int] = None):
     """Get list of models, optionally filtered by make."""
-    conn = pool.getconn()
-    try:
-        cursor = conn.cursor()
-        if make_id:
-            cursor.execute("SELECT model_id, model_name FROM models WHERE make_id = %s ORDER BY model_name", (make_id,))
-        else:
-            cursor.execute("SELECT model_id, model_name FROM models ORDER BY model_name")
-        rows = cursor.fetchall()
-        cursor.close()
-        return [{"model_id": row[0], "model_name": row[1]} for row in rows]
-    except Exception as e:
-        print(f"DB error: {e}")
+    if pool is None:
         return []
-    finally:
-        pool.putconn(conn)
+    async with pool.acquire() as conn:
+        try:
+            if make_id:
+                rows = await conn.fetch("SELECT model_id, model_name FROM models WHERE make_id = $1 ORDER BY model_name", make_id)
+            else:
+                rows = await conn.fetch("SELECT model_id, model_name FROM models ORDER BY model_name")
+            return [{"model_id": r['model_id'], "model_name": r['model_name']} for r in rows]
+        except Exception as e:
+            print(f"DB error: {e}")
+            return []
 
 
 @app.get("/api/drives")
-def get_drives():
+async def get_drives():
     """Get list of drive types."""
-    conn = pool.getconn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT drives_id AS id, drives_type AS name FROM drives ORDER BY drives_type")
-        rows = cursor.fetchall()
-        cursor.close()
-        return [{"id": row[0], "name": row[1]} for row in rows]
-    except Exception as e:
-        print(f"DB error: {e}")
+    if pool is None:
         return []
-    finally:
-        pool.putconn(conn)
+    async with pool.acquire() as conn:
+        try:
+            rows = await conn.fetch("SELECT drives_id AS id, drives_type AS name FROM drives ORDER BY drives_type")
+            return [{"id": r['id'], "name": r['name']} for r in rows]
+        except Exception as e:
+            print(f"DB error: {e}")
+            return []
 
 
 @app.get("/api/transmissions")
-def get_transmissions():
+async def get_transmissions():
     """Get list of transmission types."""
-    conn = pool.getconn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT transmission_id AS id, transmission_type AS name FROM transmissions ORDER BY transmission_type")
-        rows = cursor.fetchall()
-        cursor.close()
-        return [{"id": row[0], "name": row[1]} for row in rows]
-    except Exception as e:
-        print(f"DB error: {e}")
+    if pool is None:
         return []
-    finally:
-        pool.putconn(conn)
+    async with pool.acquire() as conn:
+        try:
+            rows = await conn.fetch("SELECT transmission_id AS id, transmission_type AS name FROM transmissions ORDER BY transmission_type")
+            return [{"id": r['id'], "name": r['name']} for r in rows]
+        except Exception as e:
+            print(f"DB error: {e}")
+            return []
 
 
 class RemoveDuplicatesRequest(BaseModel):
@@ -383,65 +472,6 @@ async def stream_subprocess_output(cmd, process_id="default"):
         # Remove from active processes
         if process_id in active_processes:
             del active_processes[process_id]
-
-
-@app.post("/api/remove-duplicates")
-async def remove_duplicates(request: RemoveDuplicatesRequest):
-    """
-    Trigger the RemoveDuplicateCars.py script to merge duplicate car records.
-    Streams output in real-time using Server-Sent Events.
-    """
-    try:
-        # Path to the script (container path)
-        script_path = "/scripts/RemoveDuplicateCars.py"
-        
-        # Build the command - use -u flag for unbuffered output
-        cmd = ["python3", "-u", script_path]
-        
-        if request.interactive:
-            cmd.append("--interactive")
-        
-        # Add batch size parameter
-        cmd.extend(["--batch-size", str(request.batch_size)])
-        
-        # Return a streaming response
-        return StreamingResponse(
-            stream_subprocess_output(cmd, "remove_duplicates"),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no"
-            }
-        )
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting script: {str(e)}")
-
-
-@app.post("/api/cancel-operation")
-async def cancel_operation():
-    """Cancel the currently running duplicate removal process."""
-    try:
-        if "remove_duplicates" in active_processes:
-            process = active_processes["remove_duplicates"]
-            process.terminate()  # Send SIGTERM
-            
-            # Wait a bit for graceful shutdown
-            try:
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                # Force kill if it doesn't respond
-                process.kill()
-                await process.wait()
-            
-            return {"message": "Process cancelled successfully"}
-        else:
-            raise HTTPException(status_code=404, detail="No active process to cancel")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error cancelling process: {str(e)}")
-
 
 # Lambda handler using Mangum
 try:

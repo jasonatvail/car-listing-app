@@ -11,9 +11,12 @@ services:
       - "5001:5001"
     env_file:
       - ./backend/.env
+    environment:
+      - PGSSLROOTCERT=/app/certs/rds-global-bundle.pem
     volumes:
       - ./backend:/app
       - ../CarListingData:/scripts
+      - ./global-bundle.pem:/app/certs/rds-global-bundle.pem:ro
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

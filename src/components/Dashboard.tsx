@@ -24,17 +24,20 @@ export default function Dashboard(){
   const [loading, setLoading] = useState(false)
   const [selectedRegion, setSelectedRegion] = useState<string | null>(null)
   const [priceRange, setPriceRange] = useState<{ min?: number | null; max?: number | null }>({})
+  const [appliedFilters, setAppliedFilters] = useState<any>({})
   const [removingDuplicates, setRemovingDuplicates] = useState(false)
   const [interactiveMode, setInteractiveMode] = useState(false)
   const [duplicateStatus, setDuplicateStatus] = useState<string>('')
   const [stats, setStats] = useState<{ total_listings: number; total_cars: number } | null>(null)
   const statusRef = useRef<HTMLPreElement>(null)
 
-  async function fetchListings(filters?: { q?: string; make_id?: number | null; model_id?: number; minPrice?: number | null; maxPrice?: number | null; minYear?: number | null; maxYear?: number | null; minOdometer?: number | null; maxOdometer?: number | null; drive?: number | null; transmission?: number | null; searchVin?: string; searchListingId?: string }){
+  async function fetchListings(filters?: { q?: string; make_id?: number | null; model_id?: number; minPrice?: number | null; maxPrice?: number | null; minYear?: number | null; maxYear?: number | null; minOdometer?: number | null; maxOdometer?: number | null; drive?: number | null; transmission?: number | null; searchVin?: string; searchListingId?: string; userLat?: number | null; userLon?: number | null; radius?: number | null; radiusUnit?: 'mi'|'km' }){
     setLoading(true)
     try{
       const params: any = { limit: 50 }
       if (filters){
+        // Save filters for client-side processing (e.g., geo filters)
+        setAppliedFilters(filters)
         // Handle VIN search
         if (filters.searchVin && filters.searchVin.trim()) {
           params.vin = filters.searchVin.trim()
@@ -56,6 +59,17 @@ export default function Dashboard(){
         if (filters.maxOdometer != null) params.max_odometer = filters.maxOdometer
         if (filters.drive != null) params.drive = filters.drive
         if (filters.transmission != null) params.transmission = filters.transmission
+
+        // Geo filters
+        if (filters.userLat != null && filters.userLon != null && filters.radius != null) {
+          params.user_lat = filters.userLat
+          params.user_lon = filters.userLon
+          params.radius = filters.radius
+          params.radius_unit = filters.radiusUnit || 'mi'
+          params.with_coords = true
+        }
+      } else {
+        setAppliedFilters({})
       }
       const r = await axios.get('/api/listings', { params })
       setListings(r.data || [])
@@ -87,84 +101,7 @@ export default function Dashboard(){
     }
   }, [duplicateStatus])
 
-  async function handleRemoveDuplicates() {
-    setRemovingDuplicates(true)
-    setDuplicateStatus('Starting duplicate removal...\n')
-    
-    try {
-      const response = await fetch('/api/remove-duplicates', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          interactive: interactiveMode,
-          batch_size: 100
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-
-      if (!reader) {
-        throw new Error('No response body')
-      }
-
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data.startsWith('[DONE]')) {
-              setDuplicateStatus(prev => prev + '\n✅ ' + data.slice(7))
-              // Refresh listings after completion
-              await fetchListings()
-            } else if (data.startsWith('[ERROR]')) {
-              setDuplicateStatus(prev => prev + '\n❌ ' + data.slice(7))
-            } else if (data.startsWith('[CANCELLED]')) {
-              setDuplicateStatus(prev => prev + '\n⏸️ ' + data.slice(11))
-            } else {
-              setDuplicateStatus(prev => prev + data)
-            }
-          }
-        }
-      }
-    } catch (error: any) {
-      console.error('Error:', error)
-      setDuplicateStatus(prev => prev + '\n❌ Error: ' + (error.message || 'Unknown error'))
-    } finally {
-      setRemovingDuplicates(false)
-    }
-  }
-
-  async function handleCancelOperation() {
-    try {
-      await fetch('/api/cancel-operation', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      })
-      setDuplicateStatus(prev => prev + '\n🛑 Sent cancellation request to server...')
-    } catch (error: any) {
-      console.error('Cancel error:', error)
-      setDuplicateStatus(prev => prev + '\n❌ Failed to cancel: ' + error.message)
-    }
-  }
-
-  // Filter by selected region first
+    // Filter by selected region first
   const filteredListings = selectedRegion 
     ? listings.filter(l => l.listing_region === selectedRegion)
     : listings
@@ -180,7 +117,9 @@ export default function Dashboard(){
   // Flatten back to single listing per VIN (show first), but mark duplicates
   let uniqueListings = Object.values(groupedByVin).map(group => ({
     ...group[0],
-    duplicateCount: group.length > 1 ? group.length : 0
+    // duplicateCount stores the number of OTHER listings with the same VIN (excludes the displayed one)
+    duplicateCount: group.length > 1 ? group.length - 1 : 0,
+    groupListings: group
   }))
 
   // Price histogram data (based on all results, not region-filtered)
@@ -300,58 +239,9 @@ export default function Dashboard(){
               <div className="text-center py-12 text-slate-600">No listings found</div>
             ) : (
               <div className="space-y-4">
-                {uniqueListings.map(l=> <ListingCard key={l.listing_id} listing={l} duplicateCount={(l as any).duplicateCount || 0} />)}
+                {uniqueListings.map(l=> <ListingCard key={l.listing_id} listing={l} listings={(l as any).groupListings} duplicateCount={(l as any).duplicateCount || 0} />)}
               </div>
             )}
-          </div>
-        </Card>
-
-        {/* Duplicate Removal Tool */}
-        <Card className="mt-6">
-          <CardHeader>
-            <div className="text-lg font-semibold">Database Maintenance</div>
-          </CardHeader>
-          <div className="px-6 pb-6">
-            <div className="flex items-center gap-4 mb-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={interactiveMode}
-                  onChange={(e) => setInteractiveMode(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300"
-                  disabled={removingDuplicates}
-                />
-                <span className="text-sm text-slate-700">Interactive Mode (requires manual approval)</span>
-              </label>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={handleRemoveDuplicates}
-                disabled={removingDuplicates}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {removingDuplicates ? 'Removing Duplicates...' : 'Remove Duplicate Cars'}
-              </button>
-              {removingDuplicates && (
-                <button
-                  onClick={handleCancelOperation}
-                  className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-                >
-                  Stop Process
-                </button>
-              )}
-            </div>
-            {duplicateStatus && (
-              <pre 
-                ref={statusRef}
-                className={`mt-3 p-3 rounded max-h-96 overflow-y-auto text-xs whitespace-pre-wrap font-mono ${removingDuplicates ? 'bg-blue-50 text-blue-800' : 'bg-green-50 text-green-800'}`}
-              >
-                {duplicateStatus}
-              </pre>
-            )}
-            <div className="mt-3 text-xs text-slate-500">
-              This will merge duplicate cars with system-generated VINs based on year, make, model, transmission, and drive type.
-            </div>
           </div>
         </Card>
       </main>
