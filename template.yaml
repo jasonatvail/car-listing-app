@@ -326,6 +326,8 @@ Resources:
               Value: '5001'
             - Name: GOOGLE_GEOCODER_KEY
               Value: !Ref GoogleGeocoderKey
+            - Name: PGSSLROOTCERT
+              Value: '/app/certs/rds-global-bundle.pem'
           LogConfiguration:
             LogDriver: awslogs
             Options:
