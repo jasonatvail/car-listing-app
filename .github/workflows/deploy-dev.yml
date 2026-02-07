@@ -85,15 +85,45 @@ jobs:
         env:
           BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          ACM_CERTIFICATE_ARN: ${{ secrets.ACM_CERTIFICATE_ARN }}
         run: |
           set -euo pipefail
           echo "Deploying CloudFormation stack '${{ env.CLUSTER_NAME }}' with pinned images"
           aws cloudformation deploy \
             --stack-name ${{ env.CLUSTER_NAME }} \
             --template-file template.yaml \
-            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} \
+            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} ACMCertificateArn=${ACM_CERTIFICATE_ARN} GoogleGeocoderKey=${{ secrets.GOOGLE_GEOCODER_KEY }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --region ${{ env.AWS_REGION }}
+
+      - name: Verify deployed image matches pinned image
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          CLUSTER: ${{ env.CLUSTER_NAME }}
+          REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            SVC_NAME=${{ env.ENVIRONMENT }}-$svc
+            echo "Verifying $SVC_NAME"
+            TASKDEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SVC_NAME" --region "$REGION" --query 'services[0].taskDefinition' --output text)
+            CURRENT_IMAGE=$(aws ecs describe-task-definition --task-definition "$TASKDEF" --region "$REGION" --query 'taskDefinition.containerDefinitions[0].image' --output text)
+            EXPECT_VAR="${svc^^}_IMAGE"
+            EXPECTED=${!EXPECT_VAR}
+            echo "Expected: $EXPECTED"
+            echo "Current:  $CURRENT_IMAGE"
+            if [ "$CURRENT_IMAGE" != "$EXPECTED" ]; then
+              echo "Mismatch for $SVC_NAME: expected $EXPECTED but taskdef uses $CURRENT_IMAGE"
+              exit 1
+            fi
+          done
+
+      - name: Print frontend URL (if available)
+        run: |
+          chmod +x ./deployment/get-frontend-url.sh || true
+          ./deployment/get-frontend-url.sh || echo "Could not determine frontend URL (stack may be initializing)"
 
       - name: Debug AWS identity and clusters
         run: |

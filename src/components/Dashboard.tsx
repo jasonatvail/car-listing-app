@@ -31,7 +31,7 @@ export default function Dashboard(){
   const [stats, setStats] = useState<{ total_listings: number; total_cars: number } | null>(null)
   const statusRef = useRef<HTMLPreElement>(null)
 
-  async function fetchListings(filters?: { q?: string; make_id?: number | null; model_id?: number; minPrice?: number | null; maxPrice?: number | null; minYear?: number | null; maxYear?: number | null; minOdometer?: number | null; maxOdometer?: number | null; drive?: number | null; transmission?: number | null; searchVin?: string; searchListingId?: string; userLat?: number | null; userLon?: number | null; radius?: number | null; radiusUnit?: 'mi'|'km' }){
+  async function fetchListings(filters?: { q?: string; make_id?: number | null; model_id?: number; minPrice?: number | null; maxPrice?: number | null; minYear?: number | null; maxYear?: number | null; minOdometer?: number | null; maxOdometer?: number | null; drive?: number | null; transmission?: number | null; searchVin?: string; searchListingId?: string; userLat?: number | null; userLon?: number | null; radius?: number | null; radiusUnit?: 'mi'|'km'; address?: string | null }){
     setLoading(true)
     try{
       const params: any = { limit: 50 }

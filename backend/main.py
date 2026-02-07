@@ -11,6 +11,8 @@ import asyncio
 import signal
 from dotenv import load_dotenv
 from typing import Optional, List
+import httpx
+
 
 load_dotenv()
 
@@ -419,6 +421,45 @@ async def get_drives():
         except Exception as e:
             print(f"DB error: {e}")
             return []
+
+
+@app.get('/api/geocode')
+async def geocode_address(address: str):
+    """Geocode an address using server-side Google Geocoding API if configured.
+
+    Returns JSON: { lat: float, lon: float, formatted_address: str }
+    If no server-side geocoder key is configured, returns 404 so clients can fall back to a public geocoder.
+    """
+    # Prefer server-side Google geocoding (keeps API key secret)
+    gkey = os.getenv('GOOGLE_GEOCODER_KEY')
+    if not gkey:
+        # Indicate to clients that server-side geocoding is not available
+        raise HTTPException(status_code=404, detail='Server-side geocoding not configured')
+
+    url = 'https://maps.googleapis.com/maps/api/geocode/json'
+    params = {'address': address, 'key': gkey}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        print('Geocode HTTP error', e)
+        raise HTTPException(status_code=502, detail='Geocoding failed')
+
+    if data.get('status') != 'OK' or not data.get('results'):
+        raise HTTPException(status_code=404, detail='No geocoding results')
+
+    res = data['results'][0]
+    loc = res['geometry']['location']
+    formatted = res.get('formatted_address') or ''
+    try:
+        lat = float(loc['lat'])
+        lon = float(loc['lng'])
+    except Exception:
+        raise HTTPException(status_code=502, detail='Invalid geocoding response')
+
+    return {'lat': lat, 'lon': lon, 'formatted_address': formatted}
 
 
 @app.get("/api/transmissions")
