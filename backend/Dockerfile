@@ -35,10 +35,12 @@ WORKDIR /app
 
 # Install build deps for binary packages, install python deps, then remove build deps
 COPY requirements.txt .
-RUN apt-get update && apt-get install -y gcc libpq-dev build-essential \
+RUN apt-get update && apt-get install -y gcc libpq-dev build-essential curl ca-certificates \
     && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
-    && apt-get remove -y build-essential gcc libpq-dev \
+    && mkdir -p /app/certs \
+    && curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /app/certs/rds-global-bundle.pem \
+    && apt-get remove -y build-essential gcc libpq-dev curl \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +49,9 @@ COPY . .
 
 # Expose port for production
 EXPOSE 5001
+
+# Default CA bundle for RDS SSL verification
+ENV PGSSLROOTCERT=/app/certs/rds-global-bundle.pem
 
 # Run uvicorn for production
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001"]
