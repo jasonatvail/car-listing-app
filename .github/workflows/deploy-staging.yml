@@ -60,21 +60,51 @@ jobs:
           docker push ${{ env.ECR_REGISTRY }}:frontend-staging
           docker push ${{ env.ECR_REGISTRY }}:frontend-${{ steps.version.outputs.version }}
 
-      - name: Debug AWS identity and clusters
+      - name: Resolve pushed image digests (pin images)
+        shell: bash
+        env:
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
         run: |
-          aws sts get-caller-identity
-          aws ecs list-clusters --region ${{ env.AWS_REGION }}
-          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
+          set -euo pipefail
+          REPO=$(echo "$ECR_REGISTRY" | awk -F/ '{print $NF}')
 
-      - name: Update ECS Services
+          TAG_BACKEND=backend-${{ steps.version.outputs.version }}
+          TAG_FRONTEND=frontend-${{ steps.version.outputs.version }}
+
+          echo "Resolving backend image digest for tag: $TAG_BACKEND"
+          BACKEND_DIGEST=$(aws ecr-public describe-images --repository-name "$REPO" --image-ids imageTag=$TAG_BACKEND --region us-east-1 --query 'imageDetails[0].imageDigest' --output text || true)
+          if [ -z "$BACKEND_DIGEST" ] || [ "$BACKEND_DIGEST" = "None" ]; then
+            echo "Failed to resolve backend digest; falling back to tag (warning: not pinned)"
+            echo "BACKEND_IMAGE=${ECR_REGISTRY}:$TAG_BACKEND" >> $GITHUB_ENV
+          else
+            echo "BACKEND_IMAGE=${ECR_REGISTRY}@${BACKEND_DIGEST}" >> $GITHUB_ENV
+            echo "Resolved backend image: ${ECR_REGISTRY}@${BACKEND_DIGEST}"
+          fi
+
+          echo "Resolving frontend image digest for tag: $TAG_FRONTEND"
+          FRONTEND_DIGEST=$(aws ecr-public describe-images --repository-name "$REPO" --image-ids imageTag=$TAG_FRONTEND --region us-east-1 --query 'imageDetails[0].imageDigest' --output text || true)
+          if [ -z "$FRONTEND_DIGEST" ] || [ "$FRONTEND_DIGEST" = "None" ]; then
+            echo "Failed to resolve frontend digest; falling back to tag (warning: not pinned)"
+            echo "FRONTEND_IMAGE=${ECR_REGISTRY}:$TAG_FRONTEND" >> $GITHUB_ENV
+          else
+            echo "FRONTEND_IMAGE=${ECR_REGISTRY}@${FRONTEND_DIGEST}" >> $GITHUB_ENV
+            echo "Resolved frontend image: ${ECR_REGISTRY}@${FRONTEND_DIGEST}"
+          fi
+
+      - name: Deploy CloudFormation with pinned images
+        env:
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
         run: |
-          for service in backend frontend; do
-            aws ecs update-service \
-              --cluster ${{ env.CLUSTER_NAME }} \
-              --service ${{ env.ENVIRONMENT }}-$service \
-              --force-new-deployment \
-              --region ${{ env.AWS_REGION }} || echo "Service may not exist yet"
-          done
+          set -euo pipefail
+          echo "Deploying CloudFormation stack '${{ env.CLUSTER_NAME }}' with pinned images"
+          aws cloudformation deploy \
+            --stack-name ${{ env.CLUSTER_NAME }} \
+            --template-file template.yaml \
+            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }}
 
       - name: Wait for deployment
         run: |
@@ -85,9 +115,33 @@ jobs:
               --region ${{ env.AWS_REGION }} || echo "Service stabilization timeout"
           done
 
+      - name: Verify deployed image matches pinned image
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          CLUSTER: ${{ env.CLUSTER_NAME }}
+          REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          for svc in backend frontend; do
+            SVC_NAME=${{ env.ENVIRONMENT }}-$svc
+            echo "Verifying $SVC_NAME"
+            TASKDEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SVC_NAME" --region "$REGION" --query 'services[0].taskDefinition' --output text)
+            CURRENT_IMAGE=$(aws ecs describe-task-definition --task-definition "$TASKDEF" --region "$REGION" --query 'taskDefinition.containerDefinitions[0].image' --output text)
+            EXPECT_VAR="${svc^^}_IMAGE"
+            EXPECTED=${!EXPECT_VAR}
+            echo "Expected: $EXPECTED"
+            echo "Current:  $CURRENT_IMAGE"
+            if [ "$CURRENT_IMAGE" != "$EXPECTED" ]; then
+              echo "Mismatch for $SVC_NAME: expected $EXPECTED but taskdef uses $CURRENT_IMAGE"
+              exit 1
+            fi
+          done
+
       - name: Deployment Summary
         run: |
           echo "✅ Staging deployment complete"
           echo "Version: ${{ steps.version.outputs.version }}"
-          echo "Backend: ${{ env.ECR_REGISTRY }}:backend-${{ steps.version.outputs.version }}"
-          echo "Frontend: ${{ env.ECR_REGISTRY }}:frontend-${{ steps.version.outputs.version }}"
+          echo "Backend: ${{ env.BACKEND_IMAGE }}"
+          echo "Frontend: ${{ env.FRONTEND_IMAGE }}"
