@@ -105,13 +105,14 @@ jobs:
         env:
           BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          ACM_CERTIFICATE_ARN: ${{ secrets.ACM_CERTIFICATE_ARN }}
         run: |
           set -euo pipefail
           echo "Deploying CloudFormation stack '${{ env.CLUSTER_NAME }}' with pinned images"
           aws cloudformation deploy \
             --stack-name ${{ env.CLUSTER_NAME }} \
             --template-file template.yaml \
-            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} \
+            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} ACMCertificateArn=${ACM_CERTIFICATE_ARN} GoogleGeocoderKey=${{ secrets.GOOGLE_GEOCODER_KEY }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --region ${{ env.AWS_REGION }}
 
@@ -148,6 +149,11 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Print frontend URL (if available)
+        run: |
+          chmod +x ./deployment/get-frontend-url.sh || true
+          ./deployment/get-frontend-url.sh || echo "Could not determine frontend URL (stack may be initializing)"
 
       - name: Create Release
         uses: actions/create-release@v1

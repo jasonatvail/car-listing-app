@@ -17,6 +17,13 @@ type Props = {
     transmission?: number | null
     searchVin?: string
     searchListingId?: string
+    // Geo fallback
+    userLat?: number | null
+    userLon?: number | null
+    radius?: number | null
+    radiusUnit?: 'mi'|'km'
+    address?: string | null
+    resolvedAddress?: string | null
   }) => void
   priceRange?: {
     min?: number | null
@@ -52,6 +59,12 @@ export default function Filters({ onApply, priceRange }: Props){
   const [locationError, setLocationError] = React.useState<string | null>(null)
   const [radiusValue, setRadiusValue] = React.useState('50') // default
   const [radiusUnit, setRadiusUnit] = React.useState<'mi' | 'km'>('mi')
+
+  // Address fallback (when browser geolocation is unavailable or user prefers typing an address)
+  const [address, setAddress] = React.useState('')
+  const [resolvedAddress, setResolvedAddress] = React.useState<string | null>(null)
+  const [geocoding, setGeocoding] = React.useState(false)
+  const [geocodeError, setGeocodeError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!priceRange) return
@@ -148,7 +161,60 @@ export default function Filters({ onApply, priceRange }: Props){
       })
     }, 300)
     return () => clearTimeout(timer)
-  }, [selectedModel, selectedMake, minPrice, maxPrice, minYear, maxYear, minOdometer, maxOdometer, selectedDrive, selectedTransmission, searchVin, searchListingId, userLat, userLon, radiusValue, radiusUnit])
+  }, [selectedModel, selectedMake, minPrice, maxPrice, minYear, maxYear, minOdometer, maxOdometer, selectedDrive, selectedTransmission, searchVin, searchListingId, userLat, userLon, radiusValue, radiusUnit, address, geocoding])
+
+  async function geocodeAddress(){
+    const q = address.trim()
+    if (!q) {
+      setGeocodeError('Enter an address to look up')
+      return
+    }
+    setGeocoding(true)
+    setGeocodeError(null)
+    setResolvedAddress(null)
+    try{
+      // First try server-side geocoding (Google) if available
+      const backendRes = await fetch(`/api/geocode?address=${encodeURIComponent(q)}`)
+      if (backendRes.ok){
+        const json = await backendRes.json()
+        setUserLat(Number(json.lat))
+        setUserLon(Number(json.lon))
+        setResolvedAddress(json.formatted_address || q)
+        setGeocodeError(null)
+        return
+      } else if (backendRes.status !== 404) {
+        // non-404 means server tried and errored
+        const txt = await backendRes.text()
+        throw new Error(`Server geocode error: ${backendRes.status} ${txt.slice(0,200)}`)
+      }
+
+      // Fallback to public Nominatim if server-side geocoding not configured
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`
+      const res = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!res.ok) throw new Error(`Geocode failed: ${res.status}`)
+      const data = await res.json()
+      if (!Array.isArray(data) || data.length === 0){
+        setGeocodeError('No location found for that address')
+      } else {
+        const first = data[0]
+        const lat = parseFloat(first.lat)
+        const lon = parseFloat(first.lon)
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)){
+          setGeocodeError('Invalid location result')
+        } else {
+          setUserLat(lat)
+          setUserLon(lon)
+          setResolvedAddress(first.display_name || q)
+          setGeocodeError(null)
+        }
+      }
+    } catch (err: any){
+      console.error('Geocode error', err)
+      setGeocodeError(err.message || 'Geocoding failed')
+    } finally {
+      setGeocoding(false)
+    }
+  }
 
   return (
     <Card>
@@ -300,6 +366,7 @@ export default function Filters({ onApply, priceRange }: Props){
 
           <div className="mb-3 border-t pt-3">
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Location</h4>
+
             <div className="flex items-center gap-2 mb-2">
               <Button onClick={async ()=>{
                 if (!navigator.geolocation){
@@ -318,11 +385,23 @@ export default function Filters({ onApply, priceRange }: Props){
                 }, { timeout: 10000 })
               }} variant="ghost">{gettingLocation ? 'Locating...' : 'Use my location'}</Button>
 
-              <Button onClick={()=>{ setUserLat(null); setUserLon(null); setLocationError(null) }} variant="ghost">Clear</Button>
+              <Button onClick={()=>{ setUserLat(null); setUserLon(null); setLocationError(null); setResolvedAddress(null); setAddress('') }} variant="ghost">Clear</Button>
             </div>
 
             <div className="mb-2 text-xs text-slate-500">
               {userLat && userLon ? <span>Using location: {userLat.toFixed(4)}, {userLon.toFixed(4)}</span> : <span>No location set</span>}
+            </div>
+
+            <div className="mb-3">
+              <label className="block text-sm text-slate-600 mb-1">Or enter an address</label>
+              <div className="flex gap-2">
+                <Input type="text" placeholder="123 Main St, City, State" value={address} onChange={e=>setAddress(e.target.value)} onKeyDown={(e)=>{ if (e.key === 'Enter') { e.preventDefault(); geocodeAddress() } }} />
+                <Button onClick={geocodeAddress} disabled={geocoding} variant="ghost">{geocoding ? 'Looking up…' : 'Lookup'}</Button>
+                <Button onClick={()=>{ setAddress(''); setResolvedAddress(null); setGeocodeError(null) }} variant="ghost">Clear</Button>
+              </div>
+              {resolvedAddress && <div className="mt-2 text-xs text-slate-600">Resolved: {resolvedAddress}</div>}
+              {geocodeError && <div className="mt-2 text-xs text-red-600">{geocodeError}</div>}
+              <div className="mt-2 text-xs text-slate-400">Tip: If geolocation is blocked (HTTP), type an address and click Lookup.</div>
             </div>
 
             <div className="flex items-center gap-2">

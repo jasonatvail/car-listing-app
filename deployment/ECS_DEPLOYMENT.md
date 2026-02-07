@@ -114,6 +114,25 @@ Once ECS is deployed, GitHub Actions will automatically:
    - Build production images
    - Deploy to production environment
 
+### Enable HTTPS (ACM)
+
+To enable HTTPS on the ALB and make features like geolocation work reliably in browsers, add an ACM certificate and provide its ARN to the workflows:
+
+1. Request or import a certificate in AWS Certificate Manager (ACM) for your domain and validate it (DNS or email).
+3. In your GitHub repository, add a secret named `ACM_CERTIFICATE_ARN` with the certificate ARN (e.g., `arn:aws:acm:us-east-2:...:certificate/...`).
+4. The GitHub Actions deploy workflows (`deploy-dev.yml`, `deploy-staging.yml`, `deploy-prod.yml`) will pass the `ACMCertificateArn` parameter to CloudFormation — when present, the stack creates an HTTPS listener and HTTP→HTTPS redirect.
+
+Note: The ACM certificate **must be in the same AWS region** as the ALB (the template deploys the ALB into the stack's region).
+
+- **For ALB:** request the ACM certificate in the ALB region (e.g., `us-east-2`) and add the certificate ARN to the GitHub secret `ACM_CERTIFICATE_ARN` to enable ALB HTTPS and automatic HTTP→HTTPS redirects.
+- **For CloudFront:** request or import your ACM certificate in **`us-east-1`** (CloudFront requires certificates in us-east-1) and provide that ARN when deploying the CloudFront stack.
+
+Server-side Google geocoding (optional):
+- To enable server-side geocoding with Google (recommended so you can keep the API key secret), create a Google Geocoding API key and add it to your repository secrets as `GOOGLE_GEOCODER_KEY`.
+- The deploy workflows will pass `GoogleGeocoderKey` to the CloudFormation stack and it will be injected as `GOOGLE_GEOCODER_KEY` into the backend task definition (NoEcho / secret-safe). If the key is not present, the frontend will fall back to the public OSM Nominatim geocoder.
+
+
+If the secret is not set (or empty), the stack remains HTTP only and no HTTPS listener is created.
 ## Deployment Workflow
 
 ```
