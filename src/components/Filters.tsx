@@ -43,6 +43,15 @@ export default function Filters({ onApply, priceRange }: Props){
   const [selectedTransmission, setSelectedTransmission] = React.useState<number | null>(null)
   const [searchVin, setSearchVin] = React.useState('')
   const [searchListingId, setSearchListingId] = React.useState('')
+  const [fetchError, setFetchError] = React.useState<string | null>(null)
+
+  // Geolocation filter
+  const [userLat, setUserLat] = React.useState<number | null>(null)
+  const [userLon, setUserLon] = React.useState<number | null>(null)
+  const [gettingLocation, setGettingLocation] = React.useState(false)
+  const [locationError, setLocationError] = React.useState<string | null>(null)
+  const [radiusValue, setRadiusValue] = React.useState('50') // default
+  const [radiusUnit, setRadiusUnit] = React.useState<'mi' | 'km'>('mi')
 
   React.useEffect(() => {
     if (!priceRange) return
@@ -52,19 +61,35 @@ export default function Filters({ onApply, priceRange }: Props){
     setMaxPrice(prev => (prev !== nextMax ? nextMax : prev))
   }, [priceRange?.min, priceRange?.max])
 
+  async function fetchWithRetry(url: string, retries = 2) {
+    for (let i = 0; i <= retries; i++) {
+      try {
+        const res = await fetch(url)
+        if (!res.ok) {
+          const txt = await res.text()
+          throw new Error(`${res.status} ${res.statusText} - ${txt.slice(0,200)}`)
+        }
+        return await res.json()
+      } catch (err: any) {
+        console.warn(`fetch ${url} attempt ${i+1} failed:`, err.message || err)
+        if (i === retries) throw err
+        await new Promise(r => setTimeout(r, 400))
+      }
+    }
+  }
+
   React.useEffect(()=>{
-    fetch('/api/makes').then(r=>r.json()).then(setMakes).catch(()=>setMakes([]))
+    fetchWithRetry('/api/makes').then(setMakes).catch(e => { console.error(e); setMakes([]); setFetchError('Failed to load filters (makes)') })
   }, [])
 
   React.useEffect(()=>{
-    fetch('/api/drives').then(r=>r.json()).then((data)=> setDrives(Array.isArray(data) ? data : [])).catch(()=>setDrives([]))
-    fetch('/api/transmissions').then(r=>r.json()).then((data)=> setTransmissions(Array.isArray(data) ? data : [])).catch(()=>setTransmissions([]))
+    fetchWithRetry('/api/drives').then((data)=> setDrives(Array.isArray(data) ? data : [])).catch(e => { console.error(e); setDrives([]); setFetchError('Failed to load drives') })
+    fetchWithRetry('/api/transmissions').then((data)=> setTransmissions(Array.isArray(data) ? data : [])).catch(e => { console.error(e); setTransmissions([]); setFetchError('Failed to load transmissions') })
   }, [])
 
   React.useEffect(()=>{
-    // Fetch all models if no make selected, or filtered by make
     const url = selectedMake ? `/api/models?make_id=${selectedMake}` : '/api/models'
-    fetch(url).then(r=>r.json()).then(setModels).catch(()=>setModels([]))
+    fetchWithRetry(url).then(setModels).catch(e => { console.error(e); setModels([]); setFetchError('Failed to load models') })
   }, [selectedMake])
 
   function handleReset(){
@@ -81,6 +106,14 @@ export default function Filters({ onApply, priceRange }: Props){
     setMaxOdometer('')
     setSearchVin('')
     setSearchListingId('')
+
+    // Clear geolocation
+    setUserLat(null)
+    setUserLon(null)
+    setRadiusValue('50')
+    setRadiusUnit('mi')
+    setLocationError(null)
+
     onApply && onApply({})
   }
 
@@ -94,7 +127,7 @@ export default function Filters({ onApply, priceRange }: Props){
       const minOdometerInt = minOdometer.trim() ? parseInt(minOdometer) : null
       const maxOdometerInt = maxOdometer.trim() ? parseInt(maxOdometer) : null
 
-      onApply?.({
+          onApply?.({
         make_id: selectedMake || null,
         model_id: selectedModel || undefined,
         minPrice: min,
@@ -106,11 +139,16 @@ export default function Filters({ onApply, priceRange }: Props){
         drive: selectedDrive || null,
         transmission: selectedTransmission || null,
         searchVin: searchVin.trim(),
-        searchListingId: searchListingId.trim()
+        searchListingId: searchListingId.trim(),
+        // Geo filters
+        userLat: userLat,
+        userLon: userLon,
+        radius: radiusValue !== '' ? Number(radiusValue) : null,
+        radiusUnit: radiusUnit
       })
     }, 300)
     return () => clearTimeout(timer)
-  }, [selectedModel, selectedMake, minPrice, maxPrice, minYear, maxYear, minOdometer, maxOdometer, selectedDrive, selectedTransmission, searchVin, searchListingId])
+  }, [selectedModel, selectedMake, minPrice, maxPrice, minYear, maxYear, minOdometer, maxOdometer, selectedDrive, selectedTransmission, searchVin, searchListingId, userLat, userLon, radiusValue, radiusUnit])
 
   return (
     <Card>
@@ -118,6 +156,7 @@ export default function Filters({ onApply, priceRange }: Props){
         <h3 className="font-semibold">Filters</h3>
       </CardHeader>
       <CardBody>
+        {fetchError && <div className="mb-3 text-sm text-red-600">Warning: {fetchError} — check backend / logs.</div>}
         <div className="mb-3">
           <label className="block text-sm text-slate-600">Make</label>
           <select className="mt-1 w-full border rounded p-2" value={selectedMake ?? ''} onChange={e=> setSelectedMake(e.target.value ? parseInt(e.target.value) : null)}>
@@ -257,6 +296,51 @@ export default function Filters({ onApply, priceRange }: Props){
               value={searchListingId}
               onChange={e=>setSearchListingId(e.target.value)}
             />
+          </div>
+
+          <div className="mb-3 border-t pt-3">
+            <h4 className="text-sm font-semibold text-slate-700 mb-3">Location</h4>
+            <div className="flex items-center gap-2 mb-2">
+              <Button onClick={async ()=>{
+                if (!navigator.geolocation){
+                  setLocationError('Geolocation not supported by your browser')
+                  return
+                }
+                setGettingLocation(true)
+                setLocationError(null)
+                navigator.geolocation.getCurrentPosition((pos)=>{
+                  setGettingLocation(false)
+                  setUserLat(pos.coords.latitude)
+                  setUserLon(pos.coords.longitude)
+                }, (err)=>{
+                  setGettingLocation(false)
+                  setLocationError(err.message || 'Failed to get location')
+                }, { timeout: 10000 })
+              }} variant="ghost">{gettingLocation ? 'Locating...' : 'Use my location'}</Button>
+
+              <Button onClick={()=>{ setUserLat(null); setUserLon(null); setLocationError(null) }} variant="ghost">Clear</Button>
+            </div>
+
+            <div className="mb-2 text-xs text-slate-500">
+              {userLat && userLon ? <span>Using location: {userLat.toFixed(4)}, {userLon.toFixed(4)}</span> : <span>No location set</span>}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <label className="block text-xs text-slate-500 mb-1">Radius</label>
+                <Input type="number" value={radiusValue} onChange={e=>setRadiusValue(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Unit</label>
+                <select className="border rounded p-2" value={radiusUnit} onChange={e=>setRadiusUnit(e.target.value as 'mi'|'km')}>
+                  <option value="mi">miles</option>
+                  <option value="km">km</option>
+                </select>
+              </div>
+            </div>
+
+            {locationError && <div className="mt-2 text-xs text-red-600">{locationError}</div>}
+
           </div>
         </div>
 

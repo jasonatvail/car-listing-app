@@ -63,7 +63,7 @@ Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub 'car-listing-${AWS::StackName}'
+      ClusterName: !Sub '${AWS::StackName}'
       ClusterSettings:
         - Name: containerInsights
           Value: enabled

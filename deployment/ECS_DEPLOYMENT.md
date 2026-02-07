@@ -13,6 +13,16 @@ cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
 ./deployment/deploy-ecs-dev.sh
 ```
 
+```bash
+cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
+./deployment/deploy-ecs-staging.sh
+```
+
+```bash
+cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
+./deployment/deploy-ecs-prod.sh
+```
+
 This will:
 - Create ECS cluster: `car-listing-dev`
 - Create backend and frontend services
@@ -199,5 +209,49 @@ aws cloudformation delete-stack \
   --stack-name car-listing-dev \
   --region us-east-2
 ```
+```bash
+aws cloudformation delete-stack \
+  --stack-name car-listing-staging \
+  --region us-east-2
+```
+
+```bash
+aws cloudformation delete-stack \
+  --stack-name car-listing-prod \
+  --region us-east-2
+```
 
 **Note:** This will delete all resources but keep ECR images.
+
+Get dev frontend URL
+```bash
+# Make executable once:
+chmod +x ./deployment/get-frontend-url.sh
+
+# Print frontend URL for dev (default stack/car-listing-dev):
+./deployment/get-frontend-url.sh
+
+# Open the frontend in your browser:
+OPEN=true ./deployment/get-frontend-url.sh
+```
+
+## Using the RDS CA locally
+If your RDS instance uses a certificate chain that requires pinning (or you see SSL verification failures locally), you can pin the RDS CA bundle for local development.
+
+1. Download the RDS CA bundle (example):
+
+```bash
+curl -O https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+```
+
+2. The `docker-compose.yml` mounts `global-bundle.pem` into the backend container at `/app/certs/rds-global-bundle.pem` and sets `PGSSLROOTCERT=/app/certs/rds-global-bundle.pem` for you.
+
+3. Restart the backend:
+
+```bash
+docker compose up -d --build backend
+# View backend logs
+docker compose logs -f backend
+```
+
+If you'd rather bypass verification for local testing, set `PGSSLVERIFY=false` in `backend/.env` (insecure; do not use in production).
