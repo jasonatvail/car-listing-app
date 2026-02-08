@@ -1,5 +1,6 @@
 # Build argument to choose between dev, production, or lambda
 ARG BUILD_TARGET=dev
+ARG VERSION=dev
 
 # Development stage - optimized
 FROM node:20-alpine AS dev
@@ -32,6 +33,7 @@ RUN npm ci --legacy-peer-deps \
     && npm cache clean --force
 
 COPY . .
+ENV VITE_VERSION=$VERSION
 RUN npm run build
 
 # Production stage - minimal nginx

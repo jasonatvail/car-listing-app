@@ -37,6 +37,7 @@ jobs:
         run: |
           cd backend
           docker build --build-arg BUILD_TARGET=production \
+            --build-arg VERSION=${{ github.sha }} \
             -t ${{ env.ECR_REGISTRY }}:backend-dev \
             -t ${{ env.ECR_REGISTRY }}:backend-dev-${{ github.sha }} \
             .
@@ -46,6 +47,7 @@ jobs:
       - name: Build and Push Frontend
         run: |
           docker build --build-arg BUILD_TARGET=production \
+            --build-arg VERSION=${{ github.sha }} \
             -t ${{ env.ECR_REGISTRY }}:frontend-dev \
             -t ${{ env.ECR_REGISTRY }}:frontend-dev-${{ github.sha }} \
             .

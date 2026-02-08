@@ -8,6 +8,9 @@ export default function App() {
         <h1 className="text-2xl font-semibold">Car Listings — There were 426,804 listings and 276,628 cars</h1>
       </header>
       <Dashboard />
+      <footer className="mt-6 text-sm text-gray-500 text-center">
+        Frontend: frontend-dev-{import.meta.env.VITE_VERSION || 'dev'} | Backend: backend-dev-{import.meta.env.VITE_VERSION || 'dev'}
+      </footer>
     </div>
   )
 }

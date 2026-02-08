@@ -1,5 +1,6 @@
 # Build argument to choose between dev and lambda
 ARG BUILD_TARGET=dev
+ARG VERSION=dev
 
 # Development image - optimized
 FROM python:3.11-alpine AS dev
@@ -46,6 +47,9 @@ RUN apt-get update && apt-get install -y gcc libpq-dev build-essential curl ca-c
 
 # Copy application code
 COPY . .
+
+# Set version
+ENV VERSION=$VERSION
 
 # Expose port for production
 EXPOSE 5001
