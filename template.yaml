@@ -361,6 +361,8 @@ Resources:
                   Value: !Ref GoogleGeocoderKey
                 - Name: PGSSLROOTCERT
                   Value: '/app/certs/rds-global-bundle.pem'
+                - Name: PGSSLVERIFY
+                  Value: 'false'
               - - Name: PGHOST
                   Value: !Ref DBHostParameter
                 - Name: PGPORT
@@ -377,6 +379,8 @@ Resources:
                   Value: !Ref GoogleGeocoderKey
                 - Name: PGSSLROOTCERT
                   Value: '/app/certs/rds-global-bundle.pem'
+                - Name: PGSSLVERIFY
+                  Value: 'false'
 
           Secrets:
             Fn::If:
