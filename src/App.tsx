@@ -2,7 +2,7 @@ import React from 'react'
 import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
 import Dashboard from './components/Dashboard'
 import DevelopmentEnvironment from './components/DevelopmentEnvironment'
-import { Button } from './components/ui/Button'
+import { Button } from './components/ui/button'
 
 function App() {
   return (

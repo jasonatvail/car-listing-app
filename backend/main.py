@@ -726,6 +726,166 @@ async def get_running_frontend_image():
         return {"running_tag": None}
 
 
+@app.post("/api/ecs/update-frontend-service")
+async def update_frontend_service():
+    """Update the frontend ECS service to use the latest image from ECR."""
+    try:
+        # Get the latest image tag
+        ecr_result = subprocess.run([
+            'aws', 'ecr-public', 'describe-images', 
+            '--repository-name', 'carswebapppublic',
+            '--region', 'us-east-1',
+            '--query', 'sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]',
+            '--output', 'text'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if ecr_result.returncode != 0 or not ecr_result.stdout.strip():
+            return {"success": False, "error": "Failed to get latest image from ECR"}
+        
+        latest_tag = ecr_result.stdout.strip()
+        image_uri = f"public.ecr.aws/c9g5y1u8/carswebapppublic:{latest_tag}"
+        
+        # Get current task definition
+        task_def_result = subprocess.run([
+            'aws', 'ecs', 'describe-task-definition',
+            '--task-definition', 'car-listing-dev-frontend',
+            '--region', 'us-east-2',
+            '--query', 'taskDefinition',
+            '--output', 'json'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if task_def_result.returncode != 0:
+            return {"success": False, "error": "Failed to get current task definition"}
+        
+        import json
+        task_def = json.loads(task_def_result.stdout)
+        
+        # Update the container image
+        task_def['containerDefinitions'][0]['image'] = image_uri
+        
+        # Remove fields that shouldn't be in the register request
+        for field in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'registeredAt', 'registeredBy', 'compatibilities', 'taskDefinition']:
+            task_def.pop(field, None)
+        
+        # Register new task definition
+        register_result = subprocess.run([
+            'aws', 'ecs', 'register-task-definition',
+            '--cli-input-json', json.dumps(task_def),
+            '--region', 'us-east-2'
+        ], capture_output=True, text=True, timeout=60)
+        
+        if register_result.returncode != 0:
+            return {"success": False, "error": f"Failed to register task definition: {register_result.stderr}"}
+        
+        # Update service to use new task definition
+        update_result = subprocess.run([
+            'aws', 'ecs', 'update-service',
+            '--cluster', 'car-listing-dev',
+            '--service', 'car-listing-dev-frontend',
+            '--task-definition', f'car-listing-dev-frontend:{task_def["revision"] + 1}',
+            '--region', 'us-east-2',
+            '--force-new-deployment'
+        ], capture_output=True, text=True, timeout=60)
+        
+        if update_result.returncode != 0:
+            return {"success": False, "error": f"Failed to update service: {update_result.stderr}"}
+        
+        return {"success": True, "message": f"Frontend service updated to {latest_tag}"}
+        
+    except Exception as e:
+        print(f"Update error: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/ecs/update-backend-service")
+async def update_backend_service():
+    """Update the backend ECS service to use the latest image from ECR."""
+    try:
+        # Get all images and find the latest backend tag
+        ecr_result = subprocess.run([
+            'aws', 'ecr-public', 'describe-images', 
+            '--repository-name', 'carswebapppublic',
+            '--region', 'us-east-1',
+            '--query', 'imageDetails[].{Tags:imageTags, PushedAt:imagePushedAt}',
+            '--output', 'json'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if ecr_result.returncode != 0:
+            return {"success": False, "error": "Failed to get images from ECR"}
+        
+        import json
+        images = json.loads(ecr_result.stdout)
+        
+        # Find latest backend tag
+        backend_images = []
+        for img in images:
+            if 'Tags' in img and img['Tags']:
+                for tag in img['Tags']:
+                    if tag.startswith('backend-'):
+                        backend_images.append({
+                            'tag': tag,
+                            'pushed_at': img['PushedAt']
+                        })
+        
+        if not backend_images:
+            return {"success": False, "error": "No backend images found"}
+        
+        # Sort by pushed_at descending
+        backend_images.sort(key=lambda x: x['pushed_at'], reverse=True)
+        latest_tag = backend_images[0]['tag']
+        image_uri = f"public.ecr.aws/c9g5y1u8/carswebapppublic:{latest_tag}"
+        
+        # Get current task definition
+        task_def_result = subprocess.run([
+            'aws', 'ecs', 'describe-task-definition',
+            '--task-definition', 'car-listing-dev-backend',
+            '--region', 'us-east-2',
+            '--query', 'taskDefinition',
+            '--output', 'json'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if task_def_result.returncode != 0:
+            return {"success": False, "error": "Failed to get current task definition"}
+        
+        task_def = json.loads(task_def_result.stdout)
+        
+        # Update the container image
+        task_def['containerDefinitions'][0]['image'] = image_uri
+        
+        # Remove fields that shouldn't be in the register request
+        for field in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'registeredAt', 'registeredBy', 'compatibilities', 'taskDefinition']:
+            task_def.pop(field, None)
+        
+        # Register new task definition
+        register_result = subprocess.run([
+            'aws', 'ecs', 'register-task-definition',
+            '--cli-input-json', json.dumps(task_def),
+            '--region', 'us-east-2'
+        ], capture_output=True, text=True, timeout=60)
+        
+        if register_result.returncode != 0:
+            return {"success": False, "error": f"Failed to register task definition: {register_result.stderr}"}
+        
+        # Update service to use new task definition
+        update_result = subprocess.run([
+            'aws', 'ecs', 'update-service',
+            '--cluster', 'car-listing-dev',
+            '--service', 'car-listing-dev-backend',
+            '--task-definition', f'car-listing-dev-backend:{task_def["revision"] + 1}',
+            '--region', 'us-east-2',
+            '--force-new-deployment'
+        ], capture_output=True, text=True, timeout=60)
+        
+        if update_result.returncode != 0:
+            return {"success": False, "error": f"Failed to update service: {update_result.stderr}"}
+        
+        return {"success": True, "message": f"Backend service updated to {latest_tag}"}
+        
+    except Exception as e:
+        print(f"Update error: {e}")
+        return {"success": False, "error": str(e)}
+
+
 class RemoveDuplicatesRequest(BaseModel):
     interactive: bool = False
     batch_size: int = 100

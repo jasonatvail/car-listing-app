@@ -3,8 +3,8 @@ import Filters from './Filters'
 import ListingCard from './ListingCard'
 import ListingMap from './ListingMap'
 import axios from 'axios'
-import { Card, CardHeader } from './ui/Card'
-import { Spinner } from './ui/Spinner'
+import { Card, CardHeader } from './ui/card'
+import { Spinner } from './ui/spinner'
 
 type Listing = {
   listing_id: string | number

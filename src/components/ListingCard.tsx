@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Card, CardHeader, CardBody } from './ui/Card'
+import { Card, CardHeader, CardContent } from './ui/card'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import marker2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -181,7 +181,7 @@ export default function ListingCard({listing, listings, duplicateCount=0}:{listi
             <div className="text-sm text-slate-500">ID: {current?.listing_id ?? 'N/A'}</div>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardContent>
           {duplicateCount > 0 && (
             <div className="mb-2 text-xs text-amber-600 font-medium">📌 {duplicateCount + 1} listings with same VIN</div>
           )}
@@ -201,7 +201,7 @@ export default function ListingCard({listing, listings, duplicateCount=0}:{listi
             </MapErrorBoundary>
           )}
           <div className="text-sm text-slate-700 line-clamp-3">{decoded ?? 'No description'}</div>
-        </CardBody>
+        </CardContent>
       </Card>
     </div>
   )

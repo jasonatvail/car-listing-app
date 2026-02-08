@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { Card, CardHeader, CardBody } from './ui/Card'
-import { Button } from './ui/Button'
-import { Spinner } from './ui/Spinner'
+import { Card, CardHeader, CardContent } from './ui/card'
+import { Button } from './ui/button'
+import { Spinner } from './ui/spinner'
 
 interface ServiceInfo {
   family: string
@@ -35,6 +34,10 @@ export default function DevelopmentEnvironment() {
   const [runningFrontendTag, setRunningFrontendTag] = useState<string | null>(null)
   const [latestBackendTag, setLatestBackendTag] = useState<string | null>(null)
   const [runningBackendTag, setRunningBackendTag] = useState<string | null>(null)
+  const [updatingFrontend, setUpdatingFrontend] = useState(false)
+  const [updatingBackend, setUpdatingBackend] = useState(false)
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [updateSuccess, setUpdateSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     fetchServiceInfo()
@@ -149,6 +152,70 @@ export default function DevelopmentEnvironment() {
     }
   }
 
+  const updateFrontendService = async () => {
+    try {
+      setUpdatingFrontend(true)
+      setUpdateError(null)
+      setUpdateSuccess(null)
+
+      const response = await fetch('/api/ecs/update-frontend-service', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setUpdateSuccess(data.message)
+        // Refresh the data after a short delay
+        setTimeout(() => {
+          fetchServiceInfo()
+        }, 2000)
+      } else {
+        setUpdateError(data.error || 'Failed to update frontend service')
+      }
+    } catch (err) {
+      setUpdateError('Failed to update frontend service')
+      console.error('Error updating frontend service:', err)
+    } finally {
+      setUpdatingFrontend(false)
+    }
+  }
+
+  const updateBackendService = async () => {
+    try {
+      setUpdatingBackend(true)
+      setUpdateError(null)
+      setUpdateSuccess(null)
+
+      const response = await fetch('/api/ecs/update-backend-service', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setUpdateSuccess(data.message)
+        // Refresh the data after a short delay
+        setTimeout(() => {
+          fetchServiceInfo()
+        }, 2000)
+      } else {
+        setUpdateError(data.error || 'Failed to update backend service')
+      }
+    } catch (err) {
+      setUpdateError('Failed to update backend service')
+      console.error('Error updating backend service:', err)
+    } finally {
+      setUpdatingBackend(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen p-6 flex items-center justify-center">
@@ -167,12 +234,12 @@ export default function DevelopmentEnvironment() {
           <CardHeader>
             <div className="text-lg font-semibold text-red-600">Error</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="text-slate-600 mb-4">{error}</div>
             <Button onClick={fetchServiceInfo} variant="outline">
               Try Again
             </Button>
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     )
@@ -181,18 +248,40 @@ export default function DevelopmentEnvironment() {
   return (
     <div className="min-h-screen p-6">
       <header className="mb-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Development Environment</h1>
-            <p className="text-slate-600 mt-1">ECS Services and Task Definitions Information</p>
-          </div>
-          <Link to="/">
-            <Button variant="outline" size="sm">
-              Back to Dashboard
-            </Button>
-          </Link>
+        <div>
+          <h1 className="text-2xl font-semibold">Development Environment</h1>
+          <p className="text-slate-600 mt-1">ECS Services and Task Definitions Information</p>
         </div>
       </header>
+
+      {/* Update Status Messages */}
+      {updateSuccess && (
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center">
+            <div className="text-green-800 font-medium">✓ {updateSuccess}</div>
+            <button
+              onClick={() => setUpdateSuccess(null)}
+              className="ml-auto text-green-600 hover:text-green-800"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {updateError && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center">
+            <div className="text-red-800 font-medium">✗ {updateError}</div>
+            <button
+              onClick={() => setUpdateError(null)}
+              className="ml-auto text-red-600 hover:text-red-800"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Backend Service Information */}
@@ -201,7 +290,7 @@ export default function DevelopmentEnvironment() {
             <div className="text-lg font-semibold">Backend Service</div>
             <div className="text-sm text-slate-600">FastAPI Application</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="space-y-3">
               <div>
                 <div className="text-sm font-medium text-slate-600">Service Name</div>
@@ -228,7 +317,7 @@ export default function DevelopmentEnvironment() {
                 <div className="text-sm">{backendServiceInfo?.cpu} CPU / {backendServiceInfo?.memory} MB</div>
               </div>
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         {/* Frontend Service Information */}
@@ -237,7 +326,7 @@ export default function DevelopmentEnvironment() {
             <div className="text-lg font-semibold">Frontend Service</div>
             <div className="text-sm text-slate-600">React Application</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="space-y-3">
               <div>
                 <div className="text-sm font-medium text-slate-600">Service Name</div>
@@ -264,7 +353,7 @@ export default function DevelopmentEnvironment() {
                 <div className="text-sm">{frontendServiceInfo?.cpu} CPU / {frontendServiceInfo?.memory} MB</div>
               </div>
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
 
@@ -274,7 +363,7 @@ export default function DevelopmentEnvironment() {
           <CardHeader>
             <div className="text-lg font-semibold">Backend Task Definition</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="space-y-3">
               <div>
                 <div className="text-sm font-medium text-slate-600">Family</div>
@@ -322,9 +411,21 @@ export default function DevelopmentEnvironment() {
                     <span className="ml-2 text-xs text-red-600 font-normal">⚠️ Update needed</span>
                   )}
                 </div>
+                {latestBackendTag && runningBackendTag && latestBackendTag !== runningBackendTag && (
+                  <div className="mt-2">
+                    <Button
+                      onClick={updateBackendService}
+                      disabled={updatingBackend}
+                      size="sm"
+                      className="w-full"
+                    >
+                      {updatingBackend ? 'Updating...' : 'Deploy Latest Version'}
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         {/* Frontend Task Definition */}
@@ -332,7 +433,7 @@ export default function DevelopmentEnvironment() {
           <CardHeader>
             <div className="text-lg font-semibold">Frontend Task Definition</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="space-y-3">
               <div>
                 <div className="text-sm font-medium text-slate-600">Family</div>
@@ -380,9 +481,21 @@ export default function DevelopmentEnvironment() {
                     <span className="ml-2 text-xs text-red-600 font-normal">⚠️ Update needed</span>
                   )}
                 </div>
+                {latestFrontendTag && runningFrontendTag && latestFrontendTag !== runningFrontendTag && (
+                  <div className="mt-2">
+                    <Button
+                      onClick={updateFrontendService}
+                      disabled={updatingFrontend}
+                      size="sm"
+                      className="w-full"
+                    >
+                      {updatingFrontend ? 'Updating...' : 'Deploy Latest Version'}
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
 
@@ -392,7 +505,7 @@ export default function DevelopmentEnvironment() {
           <div className="text-lg font-semibold">Shared IAM Roles</div>
           <div className="text-sm text-slate-600">Used by both Backend and Frontend Services</div>
         </CardHeader>
-        <CardBody>
+        <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <div className="text-sm font-medium text-slate-600 mb-2">Task Role ARN</div>
@@ -403,7 +516,7 @@ export default function DevelopmentEnvironment() {
               <div className="text-xs font-mono bg-slate-50 p-3 rounded break-all">{backendServiceInfo?.executionRoleArn}</div>
             </div>
           </div>
-        </CardBody>
+        </CardContent>
       </Card>
 
       {/* Task Definition ARNs */}
@@ -412,22 +525,22 @@ export default function DevelopmentEnvironment() {
           <CardHeader>
             <div className="text-lg font-semibold">Backend Task Definition ARN</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="text-xs font-mono bg-slate-50 p-3 rounded break-all">
               {backendServiceInfo?.taskDefinitionArn}
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
             <div className="text-lg font-semibold">Frontend Task Definition ARN</div>
           </CardHeader>
-          <CardBody>
+          <CardContent>
             <div className="text-xs font-mono bg-slate-50 p-3 rounded break-all">
               {frontendServiceInfo?.taskDefinitionArn}
             </div>
-          </CardBody>
+          </CardContent>
         </Card>
       </div>
     </div>

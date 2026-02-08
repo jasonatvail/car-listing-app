@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card, CardHeader, CardBody } from './ui/Card'
+import { Card, CardHeader, CardContent } from './ui/card'
 
 type Listing = {
   listing_id: number
@@ -53,9 +53,9 @@ export default function ListingMap({
   if (listings.length === 0) {
     return (
       <Card className="mb-6">
-        <CardBody>
+        <CardContent>
           <p className="text-slate-600">No listings to display on map</p>
-        </CardBody>
+        </CardContent>
       </Card>
     )
   }
@@ -75,7 +75,7 @@ export default function ListingMap({
           )}
         </div>
       </CardHeader>
-      <CardBody>
+      <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {regionStats.map(stat => (
             <button
@@ -98,7 +98,7 @@ export default function ListingMap({
             </button>
           ))}
         </div>
-      </CardBody>
+      </CardContent>
     </Card>
   )
 }

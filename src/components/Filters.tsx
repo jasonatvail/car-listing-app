@@ -1,13 +1,14 @@
 import React from 'react'
-import { Input } from './ui/Input'
-import { Button } from './ui/Button'
-import { Card, CardHeader, CardBody } from './ui/Card'
+import { Input } from './ui/input'
+import { Button } from './ui/button'
+import { Card, CardHeader, CardContent } from './ui/card'
 
 type Props = {
   onApply?: (filters: {
     make_id?: number | null
     model_id?: number
     minPrice?: number | null
+  executionRoleArn: string
     maxPrice?: number | null
     minYear?: number | null
     maxYear?: number | null
@@ -221,7 +222,7 @@ export default function Filters({ onApply, priceRange }: Props){
       <CardHeader>
         <h3 className="font-semibold">Filters</h3>
       </CardHeader>
-      <CardBody>
+      <CardContent>
         {fetchError && <div className="mb-3 text-sm text-red-600">Warning: {fetchError} — check backend / logs.</div>}
         <div className="mb-3">
           <label className="block text-sm text-slate-600">Make</label>
@@ -426,7 +427,7 @@ export default function Filters({ onApply, priceRange }: Props){
         <div className="flex gap-2 mt-4">
           <Button onClick={handleReset} variant="ghost">Reset</Button>
         </div>
-            </CardBody>
+            </CardContent>
           </Card>
   )
 }
