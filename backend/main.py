@@ -53,8 +53,12 @@ if pg_config['host'] not in ['localhost', '127.0.0.1']:
     if PG_SSL_VERIFY:
         # If user provided a root CA file (PGSSLROOTCERT), use it
         ssl_cafile = os.getenv('PGSSLROOTCERT')
-        if ssl_cafile:
-            SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
+        if ssl_cafile and os.path.exists(ssl_cafile):
+            try:
+                SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
+            except Exception as e:
+                print(f"⚠️  Failed to load SSL CA file {ssl_cafile}: {e}", flush=True)
+                SSL_CONTEXT = ssl.create_default_context()
         else:
             # Prefer certifi bundle if available, fall back to system default
             try:
