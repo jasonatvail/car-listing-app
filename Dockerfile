@@ -4,7 +4,6 @@ ARG VERSION=dev
 
 # Development stage - optimized for local development
 FROM node:20-alpine AS dev
-ARG VERSION
 
 WORKDIR /app
 
@@ -26,7 +25,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 # Builder stage for production builds
 FROM node:20-alpine AS builder
-ARG VERSION
+
 WORKDIR /app
 
 COPY package*.json ./
