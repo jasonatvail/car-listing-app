@@ -106,7 +106,7 @@ jobs:
         run: |
           set -euo pipefail
           for svc in backend frontend; do
-            SVC_NAME=${{ env.ENVIRONMENT }}-$svc
+            SVC_NAME=${{ env.CLUSTER_NAME }}-$svc
             echo "Verifying $SVC_NAME"
             TASKDEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SVC_NAME" --region "$REGION" --query 'services[0].taskDefinition' --output text)
             CURRENT_IMAGE=$(aws ecs describe-task-definition --task-definition "$TASKDEF" --region "$REGION" --query 'taskDefinition.containerDefinitions[0].image' --output text)
@@ -140,7 +140,7 @@ jobs:
             for service in backend frontend; do
               aws ecs update-service \
                 --cluster ${{ env.CLUSTER_NAME }} \
-                --service ${{ env.ENVIRONMENT }}-$service \
+                --service ${{ env.CLUSTER_NAME }}-$service \
                 --force-new-deployment \
                 --region ${{ env.AWS_REGION }} || echo "⚠️  Service $service may not exist yet"
             done
