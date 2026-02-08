@@ -92,7 +92,7 @@ jobs:
           aws cloudformation deploy \
             --stack-name ${{ env.CLUSTER_NAME }} \
             --template-file template.yaml \
-            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} ACMCertificateArn=${ACM_CERTIFICATE_ARN} GoogleGeocoderKey=${{ secrets.GOOGLE_GEOCODER_KEY }} \
+            --parameter-overrides BackendImageUri=${BACKEND_IMAGE} FrontendImageUri=${FRONTEND_IMAGE} ACMCertificateArn=${ACM_CERTIFICATE_ARN} GoogleGeocoderKey=${{ secrets.GOOGLE_GEOCODER_KEY }} DBPasswordSecretArn=${{ secrets.DB_PASSWORD_SECRET_ARN }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --region ${{ env.AWS_REGION }}
 
@@ -146,7 +146,7 @@ jobs:
           else
             echo "❌ ECS Cluster '${{ env.CLUSTER_NAME }}' not found!"
             echo "📋 Deploy infrastructure first:"
-            echo "   cd car-listing-app"
+            echo "   cd car-listing-app". ***Must add arn for DB_PASSWORD_SECRET_ARN***
             echo "   ./deployment/deploy-ecs-dev.sh"
             exit 1
           fi

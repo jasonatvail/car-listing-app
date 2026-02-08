@@ -58,17 +58,25 @@ echo "Backend Image: $BACKEND_IMAGE"
 echo "Frontend Image: $FRONTEND_IMAGE"
 echo ""
 
-# Prompt for database password (don't show it)
-echo "🔐 Enter RDS database password:"
-read -s DB_PASSWORD
+# Prompt for database password only if no Secrets Manager ARN provided
+DB_PASSWORD_SECRET_ARN="${DB_PASSWORD_SECRET_ARN:-}"
+EXTRA_PARAMS=""
+if [ -n "$DB_PASSWORD_SECRET_ARN" ]; then
+    echo "🔐 Using DB password from Secrets Manager ARN (DB_PASSWORD_SECRET_ARN)"
+    # CloudFormation still requires DBPasswordParameter; provide a placeholder when secret is used
+    DB_PASSWORD="__unused__"
+    EXTRA_PARAMS="DBPasswordSecretArn=$DB_PASSWORD_SECRET_ARN"
+else
+    echo "🔐 Enter RDS database password:"
+    read -s DB_PASSWORD
 
-if [ -z "$DB_PASSWORD" ]; then
+    if [ -z "$DB_PASSWORD" ]; then
+        echo ""
+        echo "❌ Database password is required"
+        exit 1
+    fi
     echo ""
-    echo "❌ Database password is required"
-    exit 1
 fi
-
-echo ""
 echo "📦 Validating CloudFormation template..."
 aws cloudformation validate-template \
     --template-body file://$TEMPLATE_FILE \
@@ -98,7 +106,8 @@ aws cloudformation deploy \
         PublicSubnets=$PUBLIC_SUBNETS \
         TaskSubnets=$TASK_SUBNETS \
         AllowedClientIP=$ALLOWED_IP \
-        DesiredCount=1
+        DesiredCount=1 \
+        $EXTRA_PARAMS
 
 echo ""
 echo "✅ Deployment complete!"
