@@ -133,8 +133,9 @@ jobs:
 
       - name: Update ECS Services
         run: |
+          echo "Checking for cluster: ${{ env.CLUSTER_NAME }} in region: ${{ env.AWS_REGION }}"
           # Check if cluster exists
-          if aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'length(clusters)' --output text | grep -q "1"; then
+          if aws ecs list-clusters --region ${{ env.AWS_REGION }} | grep -q "${{ env.CLUSTER_NAME }}"; then
             echo "✅ Cluster ${{ env.CLUSTER_NAME }} found"
             for service in backend frontend; do
               aws ecs update-service \
