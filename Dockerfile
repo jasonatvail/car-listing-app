@@ -1,9 +1,10 @@
 # Build argument to choose between dev or production
 ARG BUILD_TARGET=dev
-ARG VERSION
+ARG VERSION=dev
 
 # Development stage - optimized for local development
 FROM node:20-alpine AS dev
+ARG VERSION
 
 WORKDIR /app
 

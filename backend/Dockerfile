@@ -1,6 +1,6 @@
 # Build argument to choose between dev and production
 ARG BUILD_TARGET=dev
-ARG VERSION
+ARG VERSION=dev
 
 # Development image - optimized
 FROM python:3.11-alpine AS dev
@@ -32,6 +32,8 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001", "--reload"]
 
 # Production image for ECS
 FROM python:3.11-slim AS production
+
+ARG VERSION
 
 WORKDIR /app
 
