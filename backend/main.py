@@ -374,6 +374,7 @@ async def get_listings(
         print(f"DB error: {e}")
         return []
 
+    print(f"DB query returned {len(rows)} rows")
     skipped_vin_count = 0
     results = []
     for row in rows:
@@ -413,6 +414,7 @@ async def get_listings(
         if offset > 0:
             results = results[offset:offset + limit]
 
+    print(f"Returning {len(results)} results")
     return results
 
 
