@@ -382,7 +382,7 @@ Resources:
             Fn::If:
               - HasDBPasswordSecret
               - - Name: PGPASSWORD
-                  ValueFrom: !Ref DBPasswordSecretArn
+                  ValueFrom: !Sub '${DBPasswordSecretArn}:password::'
               - !Ref 'AWS::NoValue'
           LogConfiguration:
             LogDriver: awslogs

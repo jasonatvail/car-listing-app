@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -17,6 +15,7 @@ services:
       - ./backend:/app
       - ../CarListingData:/scripts
       - ./global-bundle.pem:/app/certs/rds-global-bundle.pem:ro
+      - ~/.aws:/root/.aws:ro
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

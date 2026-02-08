@@ -52,7 +52,7 @@ aws cloudformation describe-stacks \
 ### 2. Deploy New Stack
 ```bash
 cd /Users/jasonvail/Documents/SoftwareEngineering/car-listing-app
-export DB_PASSWORD_SECRET_ARN="arn:aws:secretsmanager:us-east-2:585625007298:secret:db-credentials-NLm1Mf:password::"
+export DB_PASSWORD_SECRET_ARN="arn:aws:secretsmanager:us-east-2:585625007298:secret:db-credentials-NLm1Mf"
 ./deployment/deploy-ecs-dev.sh
 ```
 

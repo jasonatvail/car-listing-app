@@ -8,6 +8,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: 'bg-sky-600 text-white hover:bg-sky-700',
+        outline: 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
         ghost: 'bg-transparent text-slate-700 hover:bg-slate-100'
       },
       size: {

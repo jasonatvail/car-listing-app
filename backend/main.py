@@ -12,6 +12,7 @@ import signal
 from dotenv import load_dotenv
 from typing import Optional, List
 import httpx
+import boto3
 
 
 load_dotenv()
@@ -38,6 +39,20 @@ pg_config = {
     'user': os.getenv('PGUSER'),
     'password': os.getenv('PGPASSWORD')
 }
+
+# If password is a Secrets Manager ARN, fetch the actual password
+if pg_config['password'] and pg_config['password'].startswith('arn:aws:secretsmanager:'):
+    import boto3
+    import json
+    try:
+        client = boto3.client('secretsmanager')
+        response = client.get_secret_value(SecretId=pg_config['password'])
+        secret = json.loads(response['SecretString'])
+        pg_config['password'] = secret['password']
+        print("✅ Retrieved database password from Secrets Manager", flush=True)
+    except Exception as e:
+        print(f"❌ Failed to retrieve password from Secrets Manager: {e}", flush=True)
+        pg_config['password'] = None
 
 # Required environment variables for DB connectivity
 required_vars = ['PGHOST', 'PGDATABASE', 'PGUSER', 'PGPASSWORD']
@@ -563,6 +578,152 @@ async def get_transmissions():
         except Exception as e:
             print(f"DB error: {e}")
             return []
+
+
+@app.get("/api/ecr/latest-frontend-image")
+async def get_latest_frontend_image():
+    """Get the latest frontend image tag from ECR."""
+    try:
+        # Use AWS CLI to get the latest image tag
+        result = subprocess.run([
+            'aws', 'ecr-public', 'describe-images', 
+            '--repository-name', 'carswebapppublic',
+            '--region', 'us-east-1',
+            '--query', 'sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]',
+            '--output', 'text'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            return {"latest_tag": result.stdout.strip()}
+        else:
+            print(f"AWS CLI error: {result.stderr}")
+            return {"latest_tag": None}
+    except Exception as e:
+        print(f"ECR error: {e}")
+        return {"latest_tag": None}
+
+
+@app.get("/api/ecr/latest-backend-image")
+async def get_latest_backend_image():
+    """Get the latest backend image tag from ECR."""
+    try:
+        # Use AWS CLI to get all image tags
+        result = subprocess.run([
+            'aws', 'ecr-public', 'describe-images', 
+            '--repository-name', 'carswebapppublic',
+            '--region', 'us-east-1',
+            '--query', 'imageDetails[].{Tags:imageTags, PushedAt:imagePushedAt}',
+            '--output', 'json'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            import json
+            images = json.loads(result.stdout)
+            # Filter for images with backend tags and sort by push date
+            backend_images = []
+            for img in images:
+                if 'Tags' in img and img['Tags']:
+                    for tag in img['Tags']:
+                        if tag.startswith('backend-'):
+                            backend_images.append({
+                                'tag': tag,
+                                'pushed_at': img['PushedAt']
+                            })
+            
+            if backend_images:
+                # Sort by pushed_at descending
+                backend_images.sort(key=lambda x: x['pushed_at'], reverse=True)
+                return {"latest_tag": backend_images[0]['tag']}
+            
+        print(f"AWS CLI error: {result.stderr}")
+        return {"latest_tag": None}
+    except Exception as e:
+        print(f"ECR error: {e}")
+        return {"latest_tag": None}
+
+
+@app.get("/api/ecs/running-backend-image")
+async def get_running_backend_image():
+    """Get the currently running backend image tag from ECS."""
+    try:
+        # Get task definition ARN
+        result = subprocess.run([
+            'aws', 'ecs', 'describe-services',
+            '--cluster', 'car-listing-dev',
+            '--services', 'car-listing-dev-backend',
+            '--region', 'us-east-2',
+            '--query', 'services[0].taskDefinition',
+            '--output', 'text'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            task_def_arn = result.stdout.strip()
+            
+            # Get image from task definition
+            img_result = subprocess.run([
+                'aws', 'ecs', 'describe-task-definition',
+                '--task-definition', task_def_arn,
+                '--region', 'us-east-2',
+                '--query', 'taskDefinition.containerDefinitions[0].image',
+                '--output', 'text'
+            ], capture_output=True, text=True, timeout=30)
+            
+            if img_result.returncode == 0 and img_result.stdout.strip():
+                image_uri = img_result.stdout.strip()
+                # Extract tag
+                if ':' in image_uri:
+                    tag = image_uri.split(':')[-1]
+                else:
+                    tag = 'latest'
+                return {"running_tag": tag}
+        
+        print(f"AWS CLI error: {result.stderr}")
+        return {"running_tag": None}
+    except Exception as e:
+        print(f"ECS error: {e}")
+        return {"running_tag": None}
+
+
+@app.get("/api/ecs/running-frontend-image")
+async def get_running_frontend_image():
+    """Get the currently running frontend image tag from ECS."""
+    try:
+        # Get task definition ARN
+        result = subprocess.run([
+            'aws', 'ecs', 'describe-services',
+            '--cluster', 'car-listing-dev',
+            '--services', 'car-listing-dev-frontend',
+            '--region', 'us-east-2',
+            '--query', 'services[0].taskDefinition',
+            '--output', 'text'
+        ], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            task_def_arn = result.stdout.strip()
+            
+            # Get image from task definition
+            img_result = subprocess.run([
+                'aws', 'ecs', 'describe-task-definition',
+                '--task-definition', task_def_arn,
+                '--region', 'us-east-2',
+                '--query', 'taskDefinition.containerDefinitions[0].image',
+                '--output', 'text'
+            ], capture_output=True, text=True, timeout=30)
+            
+            if img_result.returncode == 0 and img_result.stdout.strip():
+                image_uri = img_result.stdout.strip()
+                # Extract tag
+                if ':' in image_uri:
+                    tag = image_uri.split(':')[-1]
+                else:
+                    tag = 'latest'
+                return {"running_tag": tag}
+        
+        print(f"AWS CLI error: {result.stderr}")
+        return {"running_tag": None}
+    except Exception as e:
+        print(f"ECS error: {e}")
+        return {"running_tag": None}
 
 
 class RemoveDuplicatesRequest(BaseModel):
