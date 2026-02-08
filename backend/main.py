@@ -250,6 +250,8 @@ async def get_listings(
     if pool is None:
         return []
 
+    print(f"get_listings called with user_lat={user_lat}, user_lon={user_lon}, radius={radius}, with_coords={with_coords}", flush=True)
+
     # Build filters using $n placeholders for asyncpg
     filters = []
     params: List = []
@@ -308,6 +310,7 @@ async def get_listings(
     # Handle geo-distance filter (haversine/acos formula). If user provides lat/lon and a radius, apply filter.
     geo_distance_expr = None
     geo_used = False
+    print(f"Checking geo filter: user_lat={user_lat} is not None: {user_lat is not None}, user_lon={user_lon} is not None: {user_lon is not None}, radius={radius} is not None: {radius is not None}", flush=True)
     if user_lat is not None and user_lon is not None and radius is not None:
         # Ensure listings have coords
         if not with_coords:
