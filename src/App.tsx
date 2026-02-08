@@ -9,7 +9,7 @@ export default function App() {
       </header>
       <Dashboard />
       <footer className="mt-6 text-sm text-gray-500 text-center">
-        Frontend: frontend-dev-{import.meta.env.VITE_VERSION || 'dev'} | Backend: backend-dev-{import.meta.env.VITE_VERSION || 'dev'}
+        Frontend: public.ecr.aws/c9g5y1u8/carswebapppublic:frontend-dev-{import.meta.env.VITE_VERSION || 'dev'} | Backend: public.ecr.aws/c9g5y1u8/carswebapppublic:backend-dev-{import.meta.env.VITE_VERSION || 'dev'}
       </footer>
     </div>
   )
