@@ -45,6 +45,33 @@ required_vars = ['PGHOST', 'PGDATABASE', 'PGUSER', 'PGPASSWORD']
 # Track background DB init task
 db_init_task: Optional[asyncio.Task] = None
 
+def ensure_rds_ca_file():
+    ca_file = "/app/certs/rds-global-bundle.pem"
+    os.makedirs("/app/certs", exist_ok=True)
+    if os.path.exists(ca_file) and os.path.getsize(ca_file) > 0:
+        # Check if it's a valid PEM file (basic check)
+        try:
+            with open(ca_file, 'r') as f:
+                content = f.read()
+                if '-----BEGIN CERTIFICATE-----' in content and '-----END CERTIFICATE-----' in content:
+                    return ca_file
+        except:
+            pass
+    # Download
+    import urllib.request
+    import time
+    print("Downloading RDS CA bundle...", flush=True)
+    for i in range(5):
+        try:
+            urllib.request.urlretrieve("https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem", ca_file)
+            print(f"Downloaded RDS CA bundle to {ca_file}", flush=True)
+            return ca_file
+        except Exception as e:
+            print(f"Attempt {i+1} failed: {e}", flush=True)
+            time.sleep(2)
+    print("Failed to download RDS CA bundle after 5 attempts", flush=True)
+    return None
+
 import ssl
 
 # Enable SSL for remote connections and create SSL context
@@ -53,12 +80,31 @@ if pg_config['host'] not in ['localhost', '127.0.0.1']:
     if PG_SSL_VERIFY:
         # If user provided a root CA file (PGSSLROOTCERT), use it
         ssl_cafile = os.getenv('PGSSLROOTCERT')
-        if ssl_cafile and os.path.exists(ssl_cafile):
-            try:
-                SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
-            except Exception as e:
-                print(f"⚠️  Failed to load SSL CA file {ssl_cafile}: {e}", flush=True)
-                SSL_CONTEXT = ssl.create_default_context()
+        if ssl_cafile:
+            if os.path.exists(ssl_cafile):
+                try:
+                    SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
+                except Exception as e:
+                    print(f"⚠️  Failed to load SSL CA file {ssl_cafile}: {e}", flush=True)
+                    # Try to download and reload
+                    if ensure_rds_ca_file():
+                        try:
+                            SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
+                        except Exception as e2:
+                            print(f"⚠️  Still failed to load SSL CA file after download: {e2}", flush=True)
+                            SSL_CONTEXT = ssl.create_default_context()
+                    else:
+                        SSL_CONTEXT = ssl.create_default_context()
+            else:
+                # File doesn't exist, try to download
+                if ensure_rds_ca_file():
+                    try:
+                        SSL_CONTEXT = ssl.create_default_context(cafile=ssl_cafile)
+                    except Exception as e:
+                        print(f"⚠️  Failed to load downloaded SSL CA file: {e}", flush=True)
+                        SSL_CONTEXT = ssl.create_default_context()
+                else:
+                    SSL_CONTEXT = ssl.create_default_context()
         else:
             # Prefer certifi bundle if available, fall back to system default
             try:
