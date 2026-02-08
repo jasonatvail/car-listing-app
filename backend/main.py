@@ -39,11 +39,11 @@ pg_config = {
     'password': os.getenv('PGPASSWORD')
 }
 
-# Validate required environment variables
+# Required environment variables for DB connectivity
 required_vars = ['PGHOST', 'PGDATABASE', 'PGUSER', 'PGPASSWORD']
-missing_vars = [var for var in required_vars if not os.getenv(var)]
-if missing_vars:
-    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+# Track background DB init task
+db_init_task: Optional[asyncio.Task] = None
 
 import ssl
 
@@ -73,8 +73,7 @@ else:
 # Async connection pool (initialized on startup)
 pool: Optional[asyncpg.pool.Pool] = None
 
-@app.on_event("startup")
-async def startup():
+async def _init_db_pool_once():
     global pool
     pool = await asyncpg.create_pool(
         host=pg_config['host'],
@@ -86,6 +85,39 @@ async def startup():
         max_size=20,
         ssl=SSL_CONTEXT
     )
+
+
+async def _retry_db_pool(max_attempts: int = 30, delay_seconds: int = 10):
+    """Retry DB pool initialization in the background without crashing the app."""
+    global pool
+    for attempt in range(1, max_attempts + 1):
+        if pool is not None:
+            return
+        try:
+            await _init_db_pool_once()
+            print("✅ DB connection pool initialized (retry)", flush=True)
+            return
+        except Exception as e:
+            print(f"⚠️  DB connection failed (attempt {attempt}/{max_attempts}): {e}", flush=True)
+            await asyncio.sleep(delay_seconds)
+    print("⚠️  DB connection failed after retries; running without DB pool", flush=True)
+
+
+@app.on_event("startup")
+async def startup():
+    global pool, db_init_task
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        print(f"⚠️  Missing required DB environment variables: {', '.join(missing_vars)}", flush=True)
+        print("⚠️  Backend will start without DB connectivity", flush=True)
+        return
+    try:
+        await _init_db_pool_once()
+        print("✅ DB connection pool initialized", flush=True)
+    except Exception as e:
+        print(f"⚠️  DB connection failed on startup: {e}", flush=True)
+        if db_init_task is None or db_init_task.done():
+            db_init_task = asyncio.create_task(_retry_db_pool())
 
     # Log SSL verification status at startup
     try:
@@ -99,6 +131,8 @@ async def startup():
         print("⚠️  DB SSL verification: status unknown")
 
     # Verify server-side SSL usage for the new connection (if possible)
+    if pool is None:
+        return
     try:
         async with pool.acquire() as conn:
             try:
