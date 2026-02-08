@@ -1,8 +1,8 @@
-# Build argument to choose between dev, production, or lambda
+# Build argument to choose between dev or production
 ARG BUILD_TARGET=dev
-ARG VERSION=dev
+ARG VERSION
 
-# Development stage - optimized
+# Development stage - optimized for local development
 FROM node:20-alpine AS dev
 
 WORKDIR /app
@@ -23,7 +23,7 @@ EXPOSE 5173
 # Run Vite dev server with host binding
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
-# Builder stage for production
+# Builder stage for production builds
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -48,27 +48,6 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
-
-# Lambda stage - minimal
-FROM public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 AS lambda-adapter
-FROM node:20-alpine AS lambda
-
-WORKDIR /app
-
-# Copy Lambda adapter
-COPY --from=lambda-adapter /lambda-adapter /opt/extensions/lambda-adapter
-
-# Install serve and production dependencies only
-RUN npm install -g serve && npm cache clean --force
-
-# Copy built files from builder
-COPY --from=builder /app/dist ./dist
-
-# Expose port for Lambda
-EXPOSE 8080
-
-# Serve the static files
-CMD ["serve", "-s", "dist", "-l", "8080"]
 
 # Final stage selection
 FROM ${BUILD_TARGET} AS final

@@ -1,6 +1,6 @@
-# Build argument to choose between dev and lambda
+# Build argument to choose between dev and production
 ARG BUILD_TARGET=dev
-ARG VERSION=dev
+ARG VERSION
 
 # Development image - optimized
 FROM python:3.11-alpine AS dev
@@ -60,22 +60,6 @@ ENV PGSSLROOTCERT=/app/certs/rds-global-bundle.pem
 
 # Run uvicorn for production
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001"]
-
-# Lambda image - optimized
-FROM public.ecr.aws/lambda/python:3.11 AS lambda
-
-# Copy requirements and install Python dependencies
-COPY requirements.txt ${LAMBDA_TASK_ROOT}/
-RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt --target ${LAMBDA_TASK_ROOT}
-
-# Install Mangum for Lambda-FastAPI adapter
-RUN pip install --no-cache-dir mangum --target ${LAMBDA_TASK_ROOT}
-
-# Copy application code
-COPY main.py ${LAMBDA_TASK_ROOT}/
-
-# Lambda handler - uses Mangum to wrap FastAPI
-CMD ["main.handler"]
 
 # Final stage selection
 FROM ${BUILD_TARGET} AS final
