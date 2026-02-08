@@ -33,8 +33,6 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001", "--reload"]
 # Production image for ECS
 FROM python:3.11-slim AS production
 
-ARG VERSION
-
 WORKDIR /app
 
 # Install build deps for binary packages, install python deps, then remove build deps
