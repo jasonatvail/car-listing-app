@@ -61,8 +61,12 @@ Parameters:
     Default: ''
     NoEcho: true
 
-Conditions:
-  CreateHttps: !Not [ !Equals [ !Ref ACMCertificateArn, '' ] ]
+  # Optional: Secrets Manager ARN containing DB password (JSON or plaintext). If provided, it will be injected as PGPASSWORD.
+  DBPasswordSecretArn:
+    Type: String
+    Description: ARN of a Secrets Manager secret that contains the DB password (optional)
+    Default: ''
+    NoEcho: true
 
   AllowedClientIP:
     Type: String
@@ -74,6 +78,15 @@ Conditions:
     Type: Number
     Default: 1
     MinValue: 1
+
+Conditions:
+  CreateHttps: !Not [ !Equals [ !Ref ACMCertificateArn, '' ] ]
+  HasDBPasswordSecret: !Not [ !Equals [ !Ref DBPasswordSecretArn, '' ] ]
+
+
+  # DesiredCount is a parameter, moved down to Parameters section
+  # (Was previously misdeclared here)
+
 
 Resources:
   ECSCluster:
@@ -107,6 +120,26 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/*'
+
+  # Optional policy to allow the task to retrieve DB password from Secrets Manager
+  TaskExecutionSecretAccess:
+    Condition: HasDBPasswordSecret
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-secret-access'
+      Roles:
+        - !Ref TaskExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource: !Ref DBPasswordSecretArn
+          - Effect: Allow
+            Action:
+              - kms:Decrypt
+            Resource: '*'
 
   TaskRole:
     Type: AWS::IAM::Role
@@ -312,22 +345,45 @@ Resources:
           PortMappings:
             - ContainerPort: 5001
           Environment:
-            - Name: PGHOST
-              Value: !Ref DBHostParameter
-            - Name: PGPORT
-              Value: '5432'
-            - Name: PGDATABASE
-              Value: !Ref DBNameParameter
-            - Name: PGUSER
-              Value: !Ref DBUserParameter
-            - Name: PGPASSWORD
-              Value: !Ref DBPasswordParameter
-            - Name: PORT
-              Value: '5001'
-            - Name: GOOGLE_GEOCODER_KEY
-              Value: !Ref GoogleGeocoderKey
-            - Name: PGSSLROOTCERT
-              Value: '/app/certs/rds-global-bundle.pem'
+            Fn::If:
+              - HasDBPasswordSecret
+              - - Name: PGHOST
+                  Value: !Ref DBHostParameter
+                - Name: PGPORT
+                  Value: '5432'
+                - Name: PGDATABASE
+                  Value: !Ref DBNameParameter
+                - Name: PGUSER
+                  Value: !Ref DBUserParameter
+                - Name: PORT
+                  Value: '5001'
+                - Name: GOOGLE_GEOCODER_KEY
+                  Value: !Ref GoogleGeocoderKey
+                - Name: PGSSLROOTCERT
+                  Value: '/app/certs/rds-global-bundle.pem'
+              - - Name: PGHOST
+                  Value: !Ref DBHostParameter
+                - Name: PGPORT
+                  Value: '5432'
+                - Name: PGDATABASE
+                  Value: !Ref DBNameParameter
+                - Name: PGUSER
+                  Value: !Ref DBUserParameter
+                - Name: PGPASSWORD
+                  Value: !Ref DBPasswordParameter
+                - Name: PORT
+                  Value: '5001'
+                - Name: GOOGLE_GEOCODER_KEY
+                  Value: !Ref GoogleGeocoderKey
+                - Name: PGSSLROOTCERT
+                  Value: '/app/certs/rds-global-bundle.pem'
+
+          Secrets:
+            Fn::If:
+              - HasDBPasswordSecret
+              - - Name: PGPASSWORD
+                  ValueFrom: !Ref DBPasswordSecretArn
+              - !Ref 'AWS::NoValue'
           LogConfiguration:
             LogDriver: awslogs
             Options:
