@@ -129,12 +129,12 @@ jobs:
         run: |
           aws sts get-caller-identity
           aws ecs list-clusters --region ${{ env.AWS_REGION }}
-          aws ecs.describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
+          aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text
 
       - name: Update ECS Services
         run: |
           # Check if cluster exists
-          if aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'clusters[0].status' --output text | grep -q "ACTIVE"; then
+          if aws ecs describe-clusters --clusters ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} --query 'length(clusters)' --output text | grep -q "1"; then
             echo "✅ Cluster ${{ env.CLUSTER_NAME }} found"
             for service in backend frontend; do
               aws ecs update-service \
@@ -146,7 +146,6 @@ jobs:
           else
             echo "❌ ECS Cluster '${{ env.CLUSTER_NAME }}' not found!"
             echo "📋 Deploy infrastructure first:"
-            echo "   cd car-listing-app". ***Must add arn for DB_PASSWORD_SECRET_ARN***
             echo "   ./deployment/deploy-ecs-dev.sh"
             exit 1
           fi
