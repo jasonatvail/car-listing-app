@@ -16,7 +16,7 @@ fi
 start_cluster() {
   local env_name="$1"
   local stack_name="car-listing-${env_name}"
-  local cluster_name="car-listing-${stack_name}"
+  local cluster_name="${stack_name}"
 
   echo "▶️  Starting ECS Services ($env_name)"
   echo "==============================="

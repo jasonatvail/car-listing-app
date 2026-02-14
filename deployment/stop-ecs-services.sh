@@ -15,7 +15,7 @@ fi
 stop_cluster() {
   local env_name="$1"
   local stack_name="car-listing-${env_name}"
-  local cluster_name="car-listing-${stack_name}"
+  local cluster_name="${stack_name}"
 
   echo "🛑 Stopping ECS Services to Avoid Charges ($env_name)"
   echo "=================================================="
